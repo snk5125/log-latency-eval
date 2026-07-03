@@ -118,6 +118,48 @@ identical batch settings everywhere: **batch timeout 5 s, max batch size
 Inter-aggregator HTTP sinks: batch timeout 1 s. These constants are part of
 the methodology and must be reported.
 
+### 4.6 Low-latency tuning profile — parity-preserving
+
+Both stacks are tuned for the lowest achievable delivery latency **within the
+experiment's constraints**. Hard constraints that may NOT be changed by
+tuning: HTTP/NDJSON transport parity (§4.4), the §4.5 batch constants,
+instance types/counts, the two-account PrivateLink topology, and identical
+treatment of both stacks (any knob turned on one stack must have its
+documented equivalent turned on the other, or be recorded as having no
+equivalent). Within those constraints, apply and document ALL of the
+following in the Ansible roles; every tuned setting is recorded with value +
+rationale in `report/REPORT.md` (Methodology → Tuning Profile):
+
+1. **Agent file pickup:** minimum file-watch/read delay (Vector `file` source
+   defaults; Cribl Edge file-monitor poll interval floored to its minimum),
+   read-from-end, no multiline aggregation.
+2. **HTTP sinks (agent→T1, T1→T2):** connection reuse/keep-alive enabled,
+   compression disabled (CPU-for-latency trade on private links), request
+   concurrency allowed to scale (Vector adaptive concurrency on; Cribl
+   equivalent max connections), no retry backoff inflation at steady state.
+3. **Buffers:** in-memory buffers on all internal hops (no disk buffering on
+   the measured path); sized so 10k EPS never blocks — buffer behavior under
+   overflow documented (block vs drop: use block, record it).
+4. **S3-source pickup (S3/S4):** SQS long-polling `WaitTimeSeconds=20`,
+   immediate visibility, notification path (S3→SQS) is event-driven — no
+   polling schedulers.
+5. **Process/thread scaling:** Cribl worker processes set to vCPU count;
+   Vector defaults to all cores — record both.
+6. **NLBs:** cross-zone load balancing ON (removes AZ-affinity queuing
+   asymmetry); target deregistration delay minimized; client keep-alive within
+   NLB idle-timeout to avoid reconnect stalls.
+7. **Placement:** generators, aggregator tiers, and endpoints span the same 2
+   AZs; cross-AZ hops are unavoidable in HA NLB designs — recorded as a
+   constraint, single-AZ pinning listed as further-evaluation work (§5.4.5).
+8. **OS/network:** ENA enabled (default on m6i), no jumbo-frame changes
+   (default 9001 MTU in-VPC), unattended upgrades disabled during runs
+   (already in `common`), generator output on tmpfs is NOT used (durability
+   realism) — gp3 with default IOPS, recorded.
+
+Anything tuned beyond this list must be added here first; anything on this
+list that cannot be implemented in a tool must be recorded in the report as
+an asymmetry.
+
 ## 5. Latency Measurement Methodology
 
 ### 5.1 Event schema (NDJSON, ~512 bytes padded)
@@ -181,6 +223,24 @@ percentiles defend it under peer review.
    sustained overload, S3 request-rate partitioning, Windows Event Log channel
    ingestion (file-based generation used for OS parity).
 
+## 5A. Network Architecture Diagrams (required deliverable)
+
+Diagrams live in `docs/diagrams/` as **Mermaid source (`.mermaid`) committed
+alongside rendered SVG**, and are referenced from README.md,
+docs/ARCHITECTURE.md, and report/REPORT.md:
+
+1. `topology.*` — two-account network topology: both VPCs/subnets/AZs, SSM +
+   S3 endpoints, PrivateLink endpoint services ↔ interface endpoints, all four
+   NLBs, aggregator fleets, leader, S3 buckets, SQS queues.
+2. `scenario-s1.*` … `scenario-s4.*` — one data-path/sequence diagram per
+   scenario showing every hop **with the timestamp capture point labeled**
+   (`t_gen` → `hop_ts.agent` → `hop_ts.agg1` → `hop_ts.agg2` → PutObject).
+3. `measurement.*` — how per-hop deltas are derived from the captured
+   timestamps (visual form of §5.2), including the batch-adjustment note.
+
+Diagrams must match Terraform/Ansible reality (names, ports, buckets) — they
+are evidence-grade artifacts, not marketing sketches.
+
 ## 6. Repository Layout
 
 ```
@@ -238,7 +298,9 @@ latency-testing/
 
 ## 8. Execution Phases
 
-1. **Build (this session):** all artifacts authored, verified, committed. ⏸ PAUSE.
+1. **Build (this session):** all artifacts authored, verified, committed.
+   Includes: §5A architecture diagrams and §4.6 low-latency tuning profile
+   applied to the Ansible roles. ⏸ PAUSE before deployment.
 2. **Deploy:** `scripts/setup.sh` (user-authorized; two AWS profiles required).
 3. **Run:** `harness/orchestrator/run_matrix.py` executes 48 runs (~12 h
    sequential; Vector and Cribl stacks may run in parallel to halve wall time).
