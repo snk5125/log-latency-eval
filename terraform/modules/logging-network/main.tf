@@ -211,7 +211,7 @@ resource "aws_security_group" "aggregator" {
   vpc_id      = aws_vpc.this.id
 
   ingress {
-    description = "Tier-1 HTTP listener (agent -> aggregator hop) from within VPC / PrivateLink ENIs"
+    description = "Tier-1 HTTP listener (agent to aggregator hop) from within VPC / PrivateLink ENIs"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
@@ -219,7 +219,7 @@ resource "aws_security_group" "aggregator" {
   }
 
   ingress {
-    description = "Tier-2 HTTP listener (aggregator -> aggregator hop, S2/S4) from within VPC"
+    description = "Tier-2 HTTP listener (aggregator to aggregator hop, S2/S4) from within VPC"
     from_port   = 8081
     to_port     = 8081
     protocol    = "tcp"

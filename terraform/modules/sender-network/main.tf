@@ -252,7 +252,7 @@ resource "aws_security_group" "aggregator_endpoints" {
   vpc_id      = aws_vpc.this.id
 
   ingress {
-    description = "Agent NDJSON POST to Tier-1 NLBs via PrivateLink (PLAN §4.4)"
+    description = "Agent NDJSON POST to Tier-1 NLBs via PrivateLink (PLAN 4.4)"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
