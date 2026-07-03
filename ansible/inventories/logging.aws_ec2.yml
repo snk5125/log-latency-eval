@@ -1,0 +1,59 @@
+# =============================================================================
+# inventories/logging.aws_ec2.yml — dynamic EC2 inventory, LOGGING account (llt)
+# =============================================================================
+# Discovers the logging-account hosts (Vector aggregators tier-1/tier-2, Cribl
+# leader, Cribl workers) by tag (PLAN §7). Paired with sender.aws_ec2.yml; both
+# are loaded because ansible.cfg sets inventory=inventories/ (the directory).
+# aws_profile is type:str, so ONE profile per file (LOGGING here).
+#
+# Env vars (exported by scripts/setup.sh; no secrets in repo, PLAN §7):
+#   LLT_AWS_PROFILE_LOGGING e.g. "llt-logging"
+#   LLT_AWS_REGION          e.g. "us-east-2"  (single region, PLAN §4.1)
+# =============================================================================
+---
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - "{{ lookup('ansible.builtin.env', 'LLT_AWS_REGION') | default('us-east-2', true) }}"
+
+# LOGGING account profile (single string).
+aws_profile: "{{ lookup('ansible.builtin.env', 'LLT_AWS_PROFILE_LOGGING') | default('llt-logging', true) }}"
+
+filters:
+  tag:Project: llt
+  instance-state-name:
+    - running
+
+hostnames:
+  - instance-id
+
+# IDENTICAL keyed_groups to the sender file so the unioned group namespace is
+# consistent: role_agg_t1, role_agg_t2, role_leader, stack_vector/cribl, os_*.
+keyed_groups:
+  - key: tags.Role | lower | replace('-', '_')
+    prefix: role
+    separator: _
+  - key: tags.Stack | lower
+    prefix: stack
+    separator: _
+  - key: tags.Os | lower
+    prefix: os
+    separator: _
+
+compose:
+  llt_role: tags.Role | default('') | lower
+  llt_stack: tags.Stack | default('') | lower
+  llt_os: tags.Os | default('') | lower
+  llt_private_ip: private_ip_address
+  llt_instance_id: instance_id
+  # Per-host SSM profile: hosts discovered by THIS file live in the LOGGING
+  # account (aggregators, Cribl leader), so the aws_ssm connection must use
+  # the logging profile. Overrides the group_vars default so one play can
+  # span both accounts with correct credentials.
+  llt_ssm_profile: lookup('ansible.builtin.env', 'LLT_AWS_PROFILE_LOGGING') | default('llt-logging', true)
+
+strict: false
+cache: true
+cache_plugin: jsonfile
+cache_connection: /tmp/llt_ansible_inv_cache
+cache_timeout: 600

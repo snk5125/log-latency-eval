@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+# =============================================================================
+# chrony.conf — llt latency experiment (PLAN §5.3)
+# =============================================================================
+# SINGLE authoritative source: AWS Time Sync (link-local, in-hypervisor).
+# No public NTP pools — cross-source selection jitter would widen the error
+# bars on every cross-host hop delta.
+server {{ time_sync_source }} iburst minpoll 4 maxpoll 4 prefer
+
+# Allow chrony to step the clock at any time if the offset is large, so the
+# < 1 ms assertion is reachable quickly (PLAN §5.3).
+makestep 1.0 -1
+
+# Record drift so re-sync after a poll is fast.
+driftfile /var/lib/chrony/drift
+
+# Enable kernel RTC sync.
+rtcsync
+
+# Log tracking/measurements so run evidence can reference chrony's own view.
+logdir /var/log/chrony
+log tracking measurements statistics

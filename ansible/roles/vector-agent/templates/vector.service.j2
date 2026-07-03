@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# systemd unit for the llt Vector AGENT.
+[Unit]
+Description=Vector agent (llt latency test)
+After=network-online.target chronyd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vector --config-yaml {{ vector_config_linux }}
+Restart=always
+RestartSec=2
+# Restart=always for the AGENT: it only forwards; a transient NLB blip should
+# self-heal. (Contrast with the generator, Restart=no, which must not relaunch.)
+AmbientCapabilities=
+Environment=VECTOR_LOG=warn
+
+[Install]
+WantedBy=multi-user.target

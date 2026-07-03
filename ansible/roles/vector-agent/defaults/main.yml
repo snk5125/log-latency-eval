@@ -1,0 +1,55 @@
+# =============================================================================
+# roles/vector-agent/defaults/main.yml
+# =============================================================================
+# WHY: Vector is one of the two forwarding agents on generator hosts (PLAN §3).
+# It tails the generator output file, stamps hop_ts.agent, and forwards to the
+# aggregator (S1/S2 HTTP NDJSON) or to landing S3 (S3/S4). PARITY with Cribl
+# Edge (role cribl-edge) is the point: identical hop_ts field name, identical
+# NDJSON-over-HTTP transport (PLAN §4.4), identical S3 batch constants (PLAN §4.5).
+---
+# --- PINNED Vector version -------------------------------------------------
+# Pinned to a real, recent Vector release. WHY pin: PLAN §7 requires version
+# pinning and recording the EXACT deployed version as report evidence. The
+# deployed binary's `vector --version` output is captured to run evidence at
+# deploy time; this default is the intended/target version.
+vector_version: "0.49.0"
+
+# Download roots. Linux uses the official tar.gz; Windows uses the zip.
+vector_download_base: "https://packages.timber.io/vector/{{ vector_version }}"
+vector_linux_arch: "x86_64-unknown-linux-gnu"     # m6i.large = x86_64
+vector_win_arch: "x86_64-pc-windows-msvc"
+
+# Install/config paths.
+vector_dir_linux: /opt/vector
+vector_config_linux: /etc/vector/vector.yaml
+vector_dir_win: C:\Program Files\Vector
+vector_config_win: C:\ProgramData\Vector\vector.yaml
+vector_service_name: vector
+
+# --- Source: generator output file to tail (PLAN §5.2 gen->agent hop) -------
+vector_source_path_linux: /opt/llt/generator/out/events.ndjson
+vector_source_path_win: C:\llt\generator\out\events.ndjson
+
+# --- Scenario wiring (injected per run by configure-scenario) --------------
+# scenario ∈ s1|s2|s3|s4 controls the sink (PLAN §2):
+#   S1/S2 -> http sink NDJSON to Tier-1 NLB :8080
+#   S3/S4 -> aws_s3 sink to the landing bucket
+scenario: "s1"
+
+# Tier-1 aggregator NLB DNS name (Vector stack) — HTTP target for S1/S2.
+# Supplied at deploy time from Terraform outputs (PLAN §4.3 llt-vagg-t1-nlb).
+vector_agg_t1_nlb: "llt-vagg-t1-nlb.internal.invalid"
+vector_agg_t1_port: 8080                 # Tier-1 listens :8080 (PLAN §4.4)
+
+# Landing bucket for S3/S4 (Vector stack), logging account (PLAN §4.3).
+vector_landing_bucket: "llt-landing-vagg-REPLACE"
+vector_aws_region: "{{ llt_aws_region | default('us-east-2') }}"
+
+# --- Batch constants — CONTROLLED CONSTANT (PLAN §4.5) ----------------------
+# S3 sinks everywhere: 5 s timeout, 10 MB max. Identical to Cribl (parity).
+vector_s3_batch_timeout_secs: 5
+vector_s3_batch_max_bytes: 10485760      # 10 MB
+# (Inter-aggregator HTTP batch is 1 s but that lives in the aggregator role.)
+
+# run_id used in the S3 key prefix for landing objects.
+run_id: ""

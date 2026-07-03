@@ -1,0 +1,99 @@
+# =============================================================================
+# roles/cribl-leader/tasks/main.yml — install pinned Cribl Stream leader
+# =============================================================================
+---
+- name: Download pinned Cribl package (leader)
+  ansible.builtin.get_url:
+    url: "{{ cribl_download_linux }}"
+    dest: "/tmp/cribl-{{ cribl_version }}.tgz"
+    mode: "0644"
+
+- name: Unpack Cribl (leader)
+  ansible.builtin.unarchive:
+    src: "/tmp/cribl-{{ cribl_version }}.tgz"
+    dest: /opt
+    remote_src: true
+
+- name: Ensure leader local config dir exists
+  ansible.builtin.file:
+    path: "{{ cribl_home }}/local/cribl"
+    state: directory
+    mode: "0755"
+
+- name: Record exact deployed Cribl version as evidence (leader)
+  ansible.builtin.command: "{{ cribl_home }}/bin/cribl version"
+  register: _cribl_leader_version
+  changed_when: false
+  failed_when: false
+
+- name: Configure Cribl in distributed LEADER mode
+  ansible.builtin.command: >-
+    {{ cribl_home }}/bin/cribl mode-master
+  register: _cribl_mode_master
+  changed_when: "'already' not in (_cribl_mode_master.stdout | default(''))"
+  failed_when: false
+  # mode-master puts this node in distributed leader mode (PLAN §4.3). Workers
+  # join it (cribl-worker role). Legacy verb name retained by Cribl CLI.
+
+- name: Template worker-group definitions onto the leader
+  ansible.builtin.template:
+    src: groups.yml.j2
+    dest: "{{ cribl_home }}/local/cribl/groups.yml"
+    mode: "0644"
+  notify: Restart cribl leader
+  # Defines worker groups t1 and t2 (PLAN §4.3). Worker pipeline/route config is
+  # pushed via cribl-worker (mirrors vector-aggregator logic per PLAN §8 split).
+
+# --- Admin bootstrap: generate password on-node, store ONLY on node ---------
+- name: Check whether admin password file already exists
+  ansible.builtin.stat:
+    path: "{{ cribl_admin_password_file }}"
+  register: cribl_pw_stat
+
+- name: Generate a random admin password on the node (no secrets in repo)
+  ansible.builtin.set_fact:
+    criblcribl_generated_admin_pw: >-
+      {{ cribl_admin_password if (cribl_admin_password | length > 0)
+         else lookup('ansible.builtin.password',
+                     '/dev/null length=24 chars=ascii_letters,digits') }}
+  when: not criblcribl_pw_stat.stat.exists
+  no_log: true
+  # WHY no_log + /dev/null lookup: PLAN §7 — no secrets in the repo. The password
+  # is generated at run time, never written to git, and persisted ONLY on the
+  # node (next task). Retrieval is via SSM (documented, not committed).
+
+- name: Persist generated admin password ONLY on the node (0600)
+  ansible.builtin.copy:
+    content: "{{ cribl_generated_admin_pw }}\n"
+    dest: "{{ cribl_admin_password_file }}"
+    mode: "0600"
+    owner: root
+    group: root
+  when: not cribl_pw_stat.stat.exists
+  no_log: true
+  # Node-only. Operators retrieve via: aws ssm start-session ... then cat this
+  # file. It is gitignored territory and never leaves the host through Ansible.
+
+- name: Set the Cribl admin password from the node-local file
+  ansible.builtin.command: >-
+    {{ cribl_home }}/bin/cribl auth reset-password
+    -u admin -p "{{ cribl_generated_admin_pw }}"
+  when: not cribl_pw_stat.stat.exists
+  no_log: true
+  changed_when: true
+  failed_when: false
+  # Applies the generated password to the built-in admin. no_log hides it from
+  # output/logs.
+
+- name: Enable Cribl leader boot-start service
+  ansible.builtin.command: >-
+    {{ cribl_home }}/bin/cribl boot-start enable -u root
+  register: _cribl_leader_bootstart
+  changed_when: "'already' not in (_cribl_leader_bootstart.stdout | default(''))"
+  failed_when: false
+
+- name: Ensure leader service is started
+  ansible.builtin.systemd:
+    name: "{{ cribl_service_name }}"
+    state: started
+    enabled: true

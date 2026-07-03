@@ -1,0 +1,82 @@
+# {{ ansible_managed }}
+# =============================================================================
+# Vector AGENT config — llt latency experiment
+# Scenario: {{ scenario }}  |  host: {{ inventory_hostname }}
+# =============================================================================
+# PARITY CONTRACT (must match cribl-edge role exactly):
+#   - source  = file tail of the generator output (PLAN §5.2 gen->agent hop)
+#   - remap   = add hop_ts.agent as ms-epoch (PLAN §5.1 field name is LOAD-BEARING)
+#   - sink    = S1/S2 -> HTTP NDJSON to Tier-1 NLB :8080 (PLAN §4.4)
+#             = S3/S4 -> aws_s3 to landing bucket, 5s/10MB batch (PLAN §4.5)
+# =============================================================================
+
+data_dir: "{{ '/var/lib/vector' if ansible_os_family != 'Windows' else 'C:\\ProgramData\\Vector\\data' }}"
+
+sources:
+  # File tail of the generator output. read_from: beginning so warm-up events
+  # are also captured (orchestrator/analysis windows out warm-up, PLAN §3/§5).
+  gen_file:
+    type: file
+    include:
+      - "{{ vector_source_path_win if ansible_os_family == 'Windows' else vector_source_path_linux }}"
+    read_from: beginning
+    # No multiline: each NDJSON event is a single line (PLAN §5.1).
+
+transforms:
+  # VRL remap stamps the agent hop timestamp. FIELD NAME hop_ts.agent is fixed
+  # by PLAN §5.1 — analysis derives (hop_ts.agent - t_gen) for the gen->agent
+  # hop and (hop_ts.agg1 - hop_ts.agent) for the agent->T1 hop. ms precision
+  # (tool-native), matching Cribl's Eval (PLAN §5.1).
+  stamp_agent:
+    type: remap
+    inputs: [gen_file]
+    source: |
+      # Parse the NDJSON line into an object.
+      . = parse_json!(.message)
+      # Ensure hop_ts exists, then append the agent receive time in ms epoch.
+      if !exists(.hop_ts) { .hop_ts = {} }
+      .hop_ts.agent = to_unix_timestamp(now(), unit: "milliseconds")
+
+sinks:
+{% if scenario in ['s1', 's2'] %}
+  # ---- S1/S2: HTTP NDJSON to Tier-1 aggregator NLB :8080 (PLAN §4.4) --------
+  to_agg_t1:
+    type: http
+    inputs: [stamp_agent]
+    uri: "http://{{ vector_agg_t1_nlb }}:{{ vector_agg_t1_port }}"
+    method: post
+    encoding:
+      codec: json          # one JSON object per line == NDJSON over HTTP POST
+    framing:
+      method: newline_delimited
+    request:
+      # Small inter-node batch keeps agent->T1 hop latency low; the controlled
+      # S3 batch (5s) only applies at the ->S3 hops (PLAN §4.5).
+      concurrency: adaptive
+    batch:
+      # Agent->aggregator HTTP is near-real-time; keep a tiny flush so the hop
+      # measures transport, not buffering. (Aggregator inter-tier HTTP uses the
+      # 1 s constant per PLAN §4.5; agent egress is kept minimal here.)
+      timeout_secs: 1
+    healthcheck:
+      enabled: false       # NLB target may float; do not block startup.
+{% else %}
+  # ---- S3/S4: aws_s3 to the landing bucket, 5s/10MB batch (PLAN §4.5) -------
+  to_landing_s3:
+    type: aws_s3
+    inputs: [stamp_agent]
+    bucket: "{{ vector_landing_bucket }}"
+    region: "{{ vector_aws_region }}"
+    # Key prefix carries run_id + host_os so analysis can attribute landing
+    # objects per run/OS (PLAN §5.1 host_os dimension).
+    key_prefix: "landing/{{ run_id }}/{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}/"
+    compression: none      # no compression — PLAN §5.4 lists it as NOT assessed.
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    batch:
+      # CONTROLLED CONSTANT (PLAN §4.5): identical to Cribl S3 destination.
+      timeout_secs: {{ vector_s3_batch_timeout_secs }}
+      max_bytes: {{ vector_s3_batch_max_bytes }}
+{% endif %}

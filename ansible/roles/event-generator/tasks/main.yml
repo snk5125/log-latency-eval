@@ -1,0 +1,16 @@
+# =============================================================================
+# roles/event-generator/tasks/main.yml — install generator (stopped/disabled)
+# =============================================================================
+---
+- name: Include Linux generator install
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
+
+- name: Include Windows generator install
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"
+
+- name: Template generator config (run params) for this host
+  ansible.builtin.include_tasks: configure.yml
+  # configure.yml is idempotent and also re-invoked standalone per-run by
+  # configure-scenario.yml to refresh run_id / EPS tier without reinstalling.

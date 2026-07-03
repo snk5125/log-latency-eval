@@ -1,0 +1,25 @@
+# =============================================================================
+# roles/common/defaults/main.yml
+# =============================================================================
+# Base host preparation shared by every llt host. WHY: a clean, quiet, uniform
+# baseline is a prerequisite for latency measurement — background package
+# activity or auto-reboots would inject uncontrolled noise into per-hop timings
+# (PLAN §1 research question isolates hop count/volume as the variables).
+---
+# Linux base packages needed by later roles and by the SSM file-transfer path.
+# - python3 : ansible module execution target (PLAN §4.2 aws_ssm).
+# - tar/unzip/curl : fetch + unpack Vector/Cribl/harness artifacts from S3.
+# - chrony : installed/managed by the time-sync role, listed here so the base
+#   image always has the package available before time-sync runs.
+common_linux_packages:
+  - python3
+  - tar
+  - unzip
+  - curl
+  - chrony
+
+# WHY disable unattended upgrades during runs: an apt/dnf automatic update or a
+# security-triggered service restart mid-run would perturb CPU/IO and clock
+# behavior, contaminating latency samples (noise control, PLAN §1). We disable
+# for the duration of the experiment; teardown is out of scope for this role.
+common_disable_auto_updates: true

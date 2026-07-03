@@ -1,0 +1,18 @@
+# =============================================================================
+# roles/vector-agent/handlers/main.yml
+# =============================================================================
+---
+- name: Reload systemd for vector
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart vector (linux)
+  ansible.builtin.systemd:
+    name: "{{ vector_service_name }}"
+    state: restarted
+    enabled: true
+
+- name: Restart vector (windows)
+  ansible.windows.win_service:
+    name: "{{ vector_service_name }}"
+    state: restarted

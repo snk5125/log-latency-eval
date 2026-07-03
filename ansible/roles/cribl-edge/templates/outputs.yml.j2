@@ -1,0 +1,33 @@
+# {{ ansible_managed }}
+# Cribl Edge outputs — scenario-selected destination (PARITY with Vector sink).
+outputs:
+{% if scenario in ['s1', 's2'] %}
+  # ---- S1/S2: Webhook (HTTP NDJSON) to Tier-1 NLB :8080 (PLAN §4.4) ---------
+  to_agg_t1:
+    type: webhook
+    url: "http://{{ cribl_edge_agg_t1_nlb }}:{{ cribl_edge_agg_t1_port }}"
+    method: POST
+    format: ndjson          # newline-delimited JSON == Vector's newline framing
+    # Keep egress near-real-time so the agent->T1 hop measures transport, not
+    # buffering (mirrors Vector's 1s agent batch).
+    flushPeriodSec: 1
+    compress: none          # compression NOT assessed (PLAN §5.4)
+    tls:
+      disabled: true        # TLS off on internal hops (PLAN §4.4)
+{% else %}
+  # ---- S3/S4: S3 destination to landing bucket, 5s flush/10MB (PLAN §4.5) ---
+  to_landing_s3:
+    type: s3
+    bucket: "{{ cribl_edge_landing_bucket }}"
+    region: "{{ cribl_edge_aws_region }}"
+    # Key prefix carries run_id + host_os, identical scheme to the Vector aws_s3
+    # sink (PLAN §5.1 host_os dimension).
+    destPath: "landing/{{ run_id }}/{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
+    format: ndjson
+    compress: none
+    # CONTROLLED CONSTANT (PLAN §4.5): 5 s flush, 10 MB max — identical to the
+    # Vector aws_s3 sink batch.timeout_secs=5 / max_bytes=10MB.
+    maxFileSizeMB: 10
+    maxFileOpenTimeSec: {{ cribl_edge_s3_flush_secs }}
+    maxFileIdleTimeSec: {{ cribl_edge_s3_flush_secs }}
+{% endif %}

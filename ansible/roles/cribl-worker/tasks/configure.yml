@@ -1,0 +1,50 @@
+# =============================================================================
+# roles/cribl-worker/tasks/configure.yml — scenario config files + restart
+# =============================================================================
+# Delivers the worker-group config (inputs/pipelines/outputs/route) as files
+# under the group's local config dir. Called at install AND standalone per-run by
+# configure-scenario.yml. MIRRORS vector-aggregator/configure.yml.
+---
+- name: Set worker-group local config dir for this group
+  ansible.builtin.set_fact:
+    _cribl_group_dir: "{{ cribl_home }}/groups/{{ cribl_worker_group }}/local/cribl"
+  # In distributed mode the leader tracks per-group config under groups/<g>/;
+  # writing here on the worker + committing via the leader keeps the bundle
+  # reproducible from the repo (PLAN §8 direct-files option).
+
+- name: Ensure worker-group config dir exists
+  ansible.builtin.file:
+    path: "{{ _cribl_group_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Template worker inputs.yml (HTTP Raw + S3-via-SQS source)
+  ansible.builtin.template:
+    src: inputs.yml.j2
+    dest: "{{ _cribl_group_dir }}/inputs.yml"
+    mode: "0644"
+  notify: Restart cribl worker
+
+- name: Template worker pipelines.yml (Eval adds hop_ts.agg1/agg2)
+  ansible.builtin.template:
+    src: pipelines.yml.j2
+    dest: "{{ _cribl_group_dir }}/pipelines.yml"
+    mode: "0644"
+  notify: Restart cribl worker
+
+- name: Template worker outputs.yml (S3 dest + Webhook t1->t2)
+  ansible.builtin.template:
+    src: outputs.yml.j2
+    dest: "{{ _cribl_group_dir }}/outputs.yml"
+    mode: "0644"
+  notify: Restart cribl worker
+
+- name: Template worker route.yml
+  ansible.builtin.template:
+    src: route.yml.j2
+    dest: "{{ _cribl_group_dir }}/route.yml"
+    mode: "0644"
+  notify: Restart cribl worker
+
+- name: Flush handlers so new scenario config is live before returning
+  ansible.builtin.meta: flush_handlers

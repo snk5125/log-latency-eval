@@ -1,0 +1,36 @@
+# =============================================================================
+# requirements.yml — Ansible Galaxy collection dependencies (llt)
+# =============================================================================
+# WHY these collections:
+#   - amazon.aws       : aws_ec2 dynamic inventory plugin + aws_ssm connection
+#                        plugin (PLAN §4.2 SSM-only management), aws_s3 for
+#                        artifact fetch, and general AWS module coverage.
+#   - community.aws    : supplemental AWS modules (SQS, misc) not yet promoted
+#                        into amazon.aws; used opportunistically by roles.
+#   - ansible.windows  : Windows Server 2022 generator hosts — win_service,
+#                        win_shell, win_package, w32tm/registry management for
+#                        time-sync (PLAN §5.3) and Vector/Cribl Windows installs.
+#   - community.windows: NSSM service wrapping + scheduled-task helpers for the
+#                        event generator on Windows (event-generator role).
+#
+# Versions are PINNED (PLAN §7: "collections pinned"). Exact deployed versions
+# are recorded as report evidence. Install with:
+#   ansible-galaxy collection install -r requirements.yml
+# =============================================================================
+---
+collections:
+  # aws_ec2 inventory + aws_ssm connection + aws_s3 module.
+  - name: amazon.aws
+    version: "9.5.0"
+
+  # Supplemental AWS modules (SQS, etc.).
+  - name: community.aws
+    version: "9.0.0"
+
+  # Windows core modules (win_service, win_package, win_shell, win_regedit).
+  - name: ansible.windows
+    version: "3.1.0"
+
+  # Windows community modules (win_nssm for wrapping eventgen.py as a service).
+  - name: community.windows
+    version: "3.0.0"

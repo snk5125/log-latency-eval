@@ -1,0 +1,59 @@
+# ── Terraform ────────────────────────────────────────────────
+# State files contain account IDs, resource ARNs, and potentially secrets.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+# Real variable values (account IDs, AWS profiles). Commit only *.example.
+terraform.tfvars
+*.auto.tfvars
+!*.tfvars.example
+# Plan output files
+*.tfplan
+*.plan
+
+# ── AWS / credentials ────────────────────────────────────────
+.aws/
+*.pem
+*.key
+*.p12
+*.pfx
+credentials
+config.aws
+
+# ── Ansible ──────────────────────────────────────────────────
+*.retry
+# Static inventories may embed hostnames/IPs of live infra. Dynamic
+# inventory config (aws_ec2.yml) is safe and committed.
+ansible/inventories/*.ini
+ansible/inventories/host_vars/
+ansible/inventories/group_vars/*secret*
+# Rendered by scripts/gen-ansible-vars.sh from live Terraform outputs —
+# contains account-specific resource identifiers. Commit only the .example.
+ansible/inventories/group_vars/all/generated_infra.yml
+vault-password*
+.vault_pass*
+
+# ── Cribl ────────────────────────────────────────────────────
+# Auth tokens, licenses, and instance state must never be committed.
+*.crbl
+cribl-auth*
+licenses/
+
+# ── Harness / results data ───────────────────────────────────
+# Raw run evidence can be large and contains live resource identifiers.
+report/evidence/raw/
+report/evidence/*.jsonl
+report/evidence/*.csv.gz
+harness/**/__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── Editor / OS noise ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

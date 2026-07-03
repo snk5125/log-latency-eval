@@ -1,0 +1,19 @@
+# =============================================================================
+# roles/time-sync/defaults/main.yml
+# =============================================================================
+# WHY THIS ROLE EXISTS (PLAN §5.3 — Clock discipline):
+#   Per-hop latency is derived by SUBTRACTING timestamps written on DIFFERENT
+#   hosts (e.g. hop_ts.agent on a generator host minus t_gen on the same host,
+#   but hop_ts.agg1 on an aggregator host minus hop_ts.agent on the generator).
+#   Any clock skew BETWEEN hosts becomes a direct additive error on the reported
+#   hop latency. The whole experiment's validity rests on tight, uniform sync to
+#   ONE authoritative source. We therefore pin every host to the AWS Time Sync
+#   service (link-local, in-hypervisor, sub-ms achievable on Linux) and to
+#   nothing else, so all hosts share a common time base with minimal jitter.
+---
+# AWS Time Sync Service link-local NTP endpoint. Single source for ALL hosts.
+time_sync_source: "169.254.169.123"
+
+# Windows w32time poll interval floor (PLAN §5.3: "64 s poll floor"). Value is
+# in seconds; w32time SpecialPollInterval is set to this.
+time_sync_win_special_poll_interval: 64

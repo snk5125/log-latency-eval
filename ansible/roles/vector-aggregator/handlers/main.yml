@@ -1,0 +1,13 @@
+# =============================================================================
+# roles/vector-aggregator/handlers/main.yml
+# =============================================================================
+---
+- name: Reload systemd for vagg
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart vagg
+  ansible.builtin.systemd:
+    name: "{{ vector_service_name }}"
+    state: restarted
+    enabled: true

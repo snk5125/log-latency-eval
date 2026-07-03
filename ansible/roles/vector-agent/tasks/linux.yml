@@ -1,0 +1,50 @@
+# =============================================================================
+# roles/vector-agent/tasks/linux.yml — install pinned Vector (tar.gz)
+# =============================================================================
+---
+- name: Ensure Vector directories exist (Linux)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ vector_dir_linux }}"
+    - /etc/vector
+
+- name: Download pinned Vector tarball (Linux)
+  ansible.builtin.get_url:
+    url: "{{ vector_download_base }}/vector-{{ vector_version }}-{{ vector_linux_arch }}.tar.gz"
+    dest: "/tmp/vector-{{ vector_version }}.tar.gz"
+    mode: "0644"
+  # Pinned URL — exact version is deploy evidence (PLAN §7).
+
+- name: Unpack Vector (Linux)
+  ansible.builtin.unarchive:
+    src: "/tmp/vector-{{ vector_version }}.tar.gz"
+    dest: "{{ vector_dir_linux }}"
+    remote_src: true
+    extra_opts: [--strip-components=2]   # strip vector-x86_64.../ prefix
+
+- name: Symlink vector binary onto PATH (Linux)
+  ansible.builtin.file:
+    src: "{{ vector_dir_linux }}/bin/vector"
+    dest: /usr/bin/vector
+    state: link
+
+- name: Record exact deployed Vector version as evidence (Linux)
+  ansible.builtin.command: /usr/bin/vector --version
+  register: _vector_version_out
+  changed_when: false
+  # PLAN §7: record the EXACT deployed version. stdout is captured; the
+  # orchestrator/analysis pulls this into run evidence.
+
+- name: Show deployed Vector version
+  ansible.builtin.debug:
+    var: _vector_version_out.stdout
+
+- name: Install Vector systemd unit (Linux)
+  ansible.builtin.template:
+    src: vector.service.j2
+    dest: /etc/systemd/system/{{ vector_service_name }}.service
+    mode: "0644"
+  notify: Reload systemd for vector

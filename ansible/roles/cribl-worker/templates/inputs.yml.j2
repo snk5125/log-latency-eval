@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+# Cribl worker inputs — group {{ cribl_worker_group }}, scenario {{ scenario }}.
+# MIRRORS vector-aggregator sources:
+#   t1: HTTP Raw :8080 (+ S3-via-SQS in S3/S4)
+#   t2: HTTP Raw :8081
+inputs:
+{% if cribl_worker_group == 't1' %}
+  http_in:
+    type: http_raw          # Cribl HTTP Raw == Vector http_server (PLAN §4.4)
+    host: 0.0.0.0
+    port: {{ cribl_t1_http_port }}
+    # NDJSON bodies; one event per line.
+    tls:
+      disabled: true         # TLS off on internal hops (PLAN §4.4)
+{% if scenario in ['s3', 's4'] %}
+  s3_in:
+    type: s3                 # S3 source == Vector aws_s3 source
+    region: "{{ cribl_aws_region }}"
+    # Event-driven pickup via SQS (PLAN §4.3), ENABLED ONLY in S3/S4.
+    queueName: "{{ cribl_landing_sqs_url }}"
+{% endif %}
+{% else %}
+  http_in:
+    type: http_raw
+    host: 0.0.0.0
+    port: {{ cribl_t2_http_port }}
+    tls:
+      disabled: true
+{% endif %}

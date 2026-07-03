@@ -1,0 +1,9 @@
+# =============================================================================
+# roles/cribl-leader/handlers/main.yml
+# =============================================================================
+---
+- name: Restart cribl leader
+  ansible.builtin.systemd:
+    name: "{{ cribl_service_name }}"
+    state: restarted
+    enabled: true

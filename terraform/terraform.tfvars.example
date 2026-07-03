@@ -1,0 +1,37 @@
+########################################################################
+# terraform.tfvars.example — SHAPE ONLY (copy to terraform.tfvars, gitignored)
+#
+# WHY THIS FILE EXISTS FOR THE EXPERIMENT:
+#   PLAN.md §7 forbids secrets in the repo and requires *.example files to show
+#   the shape of gitignored inputs. Real terraform.tfvars (with the operator's
+#   named profiles + account IDs) is gitignored. Copy this file and fill in.
+#
+#   SINGLE-ACCOUNT DRY RUN: set sender_profile == logging_profile and
+#   sender_account_id == logging_account_id to exercise the whole config
+#   (cross-account references collapse to same-account) before a real two-
+#   account deploy.
+########################################################################
+
+# --- Named AWS CLI profiles (PLAN §4.1) ---
+sender_profile  = "llt-sender"  # profile with creds for the SENDER account
+logging_profile = "llt-logging" # profile with creds for the LOGGING account
+
+# --- Account IDs (12 digits; guard-rails + naming + cross-account policies) ---
+sender_account_id  = "111111111111"
+logging_account_id = "222222222222"
+
+# --- Region (single region for both accounts) ---
+aws_region = "us-east-2"
+
+# --- NAT toggles: on for install phase, flip false after provisioning ---
+enable_sender_nat  = true
+enable_logging_nat = true
+
+# --- Instance-type overrides (defaults match PLAN §4.2/§4.3; override to
+#     smoke-test cheaply — document any override as a deviation in results) ---
+# generator_instance_type    = "m6i.large"
+# aggregator_instance_type   = "m6i.xlarge"
+# cribl_leader_instance_type = "m6i.large"
+
+# --- Data lifecycle (PLAN §4.3: 7-day expiry) ---
+# landing_final_expiration_days = 7

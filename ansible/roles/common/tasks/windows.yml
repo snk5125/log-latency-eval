@@ -1,0 +1,28 @@
+# =============================================================================
+# roles/common/tasks/windows.yml — Windows Server 2022 base prep
+# =============================================================================
+---
+- name: Ensure C:\llt working directory exists
+  ansible.windows.win_file:
+    path: C:\llt
+    state: directory
+  # Mirror of /opt/llt on Linux: staging for generator output + fetched
+  # artifacts (Vector zip, Cribl Edge, eventgen.py). Later roles reference it.
+
+# --- Noise control: hold Windows Update during runs -------------------------
+- name: Disable Windows Update automatic install during runs (noise control)
+  ansible.windows.win_service:
+    name: wuauserv
+    start_mode: disabled
+    state: stopped
+  when: common_disable_auto_updates | bool
+  # WHY: a Windows Update scan/install or reboot mid-run injects heavy IO/CPU
+  # and can restart services, contaminating latency samples (PLAN §1). We stop
+  # and disable the update service for the duration of the experiment.
+
+- name: Ensure .NET / PowerShell can run the generator (verify pwsh available)
+  ansible.windows.win_shell: $PSVersionTable.PSVersion.ToString()
+  register: common_win_ps_version
+  changed_when: false
+  # The generator (eventgen.py) is Python, but service wrapping and time-sync
+  # use PowerShell; confirm the shell the aws_ssm connection targets is healthy.

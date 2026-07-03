@@ -1,0 +1,39 @@
+# =============================================================================
+# roles/vector-agent/tasks/windows.yml — install pinned Vector (zip) + service
+# =============================================================================
+---
+- name: Ensure Vector directories exist (Windows)
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ vector_dir_win }}"
+    - C:\ProgramData\Vector
+
+- name: Download pinned Vector zip (Windows)
+  ansible.windows.win_get_url:
+    url: "{{ vector_download_base }}/vector-{{ vector_version }}-{{ vector_win_arch }}.zip"
+    dest: "C:\\llt\\vector-{{ vector_version }}.zip"
+
+- name: Unzip Vector (Windows)
+  community.windows.win_unzip:
+    src: "C:\\llt\\vector-{{ vector_version }}.zip"
+    dest: "{{ vector_dir_win }}"
+    # zip contains a vector-x86_64.../ top dir; binary ends up under bin\.
+
+- name: Record exact deployed Vector version as evidence (Windows)
+  ansible.windows.win_shell: '& "{{ vector_dir_win }}\bin\vector.exe" --version'
+  register: _vector_version_out_win
+  changed_when: false
+  # PLAN §7: exact deployed version recorded to evidence.
+
+- name: Install Vector as a Windows service via NSSM
+  community.windows.win_nssm:
+    name: "{{ vector_service_name }}"
+    application: "{{ vector_dir_win }}\\bin\\vector.exe"
+    arguments: '--config "{{ vector_config_win }}"'
+    state: present
+    start_mode: auto
+  # Vector agent runs continuously (unlike the generator); it is safe to auto
+  # since it only forwards whatever the generator produces. It is restarted on
+  # config change by configure.yml.

@@ -1,0 +1,125 @@
+# {{ ansible_managed }}
+# =============================================================================
+# Vector AGGREGATOR config — llt latency experiment
+# tier: {{ llt_role }}  |  scenario: {{ scenario }}  |  host: {{ inventory_hostname }}
+# =============================================================================
+# PARITY CONTRACT (must match cribl-worker role exactly):
+#   Tier-1 sources: http :8080 (S1/S2/S3/S4) + aws_s3 via SQS (S3/S4 only)
+#   Tier-1 remap  : add hop_ts.agg1 (ms epoch)
+#   Tier-1 sink   : S1/S3 -> final S3 (5s/10MB, key final/{run_id}/{host_os}/)
+#                   S2/S4 -> http :8081 to Tier-2 NLB (1s batch)
+#   Tier-2 source : http :8081
+#   Tier-2 remap  : add hop_ts.agg2 (ms epoch)
+#   Tier-2 sink   : final S3 (5s/10MB)
+# Field names hop_ts.agg1 / hop_ts.agg2 are LOAD-BEARING (PLAN §5.1).
+# =============================================================================
+
+data_dir: /var/lib/vector
+
+sources:
+{% if llt_role == 'agg_t1' %}
+  # ---- TIER-1 HTTP source :8080 (all scenarios receive agent HTTP here for
+  #      S1/S2; for S3/S4 the agent went to S3 instead, but the listener is
+  #      harmless and kept for config uniformity). PLAN §4.4.
+  http_in:
+    type: http_server
+    address: "0.0.0.0:{{ vector_t1_http_port }}"
+    encoding: ndjson          # newline-delimited JSON bodies (PLAN §4.4)
+    path: "/"
+{% if scenario in ['s3', 's4'] %}
+  # ---- TIER-1 S3 source via SQS — ENABLED ONLY in S3/S4 (PLAN §4.3 event-
+  #      driven pickup from the landing bucket). agent wrote to landing S3; this
+  #      consumes those objects.
+  s3_in:
+    type: aws_s3
+    region: "{{ vector_aws_region }}"
+    sqs:
+      queue_url: "{{ vector_landing_sqs_url }}"
+      # Event-notification driven (not poll-interval) — PLAN §4.3.
+    # Objects are NDJSON; Vector decodes line-delimited automatically.
+{% endif %}
+{% elif llt_role == 'agg_t2' %}
+  # ---- TIER-2 HTTP source :8081 (receives tier-1 forward in S2/S4). PLAN §4.4.
+  http_in:
+    type: http_server
+    address: "0.0.0.0:{{ vector_t2_http_port }}"
+    encoding: ndjson
+    path: "/"
+{% endif %}
+
+transforms:
+{% if llt_role == 'agg_t1' %}
+  # Stamp hop_ts.agg1 on tier-1 (PLAN §5.1). ms epoch to match Cribl Eval.
+  stamp_agg1:
+    type: remap
+{% if scenario in ['s3', 's4'] %}
+    inputs: [http_in, s3_in]
+{% else %}
+    inputs: [http_in]
+{% endif %}
+    source: |
+      if !exists(.hop_ts) { .hop_ts = {} }
+      .hop_ts.agg1 = to_unix_timestamp(now(), unit: "milliseconds")
+{% elif llt_role == 'agg_t2' %}
+  # Stamp hop_ts.agg2 on tier-2 (PLAN §5.1).
+  stamp_agg2:
+    type: remap
+    inputs: [http_in]
+    source: |
+      if !exists(.hop_ts) { .hop_ts = {} }
+      .hop_ts.agg2 = to_unix_timestamp(now(), unit: "milliseconds")
+{% endif %}
+
+sinks:
+{% if llt_role == 'agg_t1' %}
+{% if scenario in ['s1', 's3'] %}
+  # ---- S1/S3: tier-1 is TERMINAL -> final S3 (5s/10MB). PLAN §4.5 + key scheme
+  #      final/{run_id}/{host_os}/ (PLAN §5.1 host_os partition). host_os is a
+  #      per-EVENT field, so we partition by the event's host_os value.
+  final_s3:
+    type: aws_s3
+    inputs: [stamp_agg1]
+    bucket: "{{ vector_final_bucket }}"
+    region: "{{ vector_aws_region }}"
+    key_prefix: "final/{{ run_id }}/{{ '{{' }} .host_os {{ '}}' }}/"
+    compression: none
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    batch:
+      timeout_secs: {{ vector_s3_batch_timeout_secs }}
+      max_bytes: {{ vector_s3_batch_max_bytes }}
+{% else %}
+  # ---- S2/S4: tier-1 forwards HTTP NDJSON to Tier-2 NLB :8081 (1s batch).
+  to_t2:
+    type: http
+    inputs: [stamp_agg1]
+    uri: "http://{{ vector_agg_t2_nlb }}:{{ vector_t2_http_port }}"
+    method: post
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    batch:
+      timeout_secs: {{ vector_http_batch_timeout_secs }}   # 1 s inter-tier (§4.5)
+    healthcheck:
+      enabled: false
+{% endif %}
+{% elif llt_role == 'agg_t2' %}
+  # ---- Tier-2 is always TERMINAL -> final S3 (5s/10MB). PLAN §4.5.
+  final_s3:
+    type: aws_s3
+    inputs: [stamp_agg2]
+    bucket: "{{ vector_final_bucket }}"
+    region: "{{ vector_aws_region }}"
+    key_prefix: "final/{{ run_id }}/{{ '{{' }} .host_os {{ '}}' }}/"
+    compression: none
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    batch:
+      timeout_secs: {{ vector_s3_batch_timeout_secs }}
+      max_bytes: {{ vector_s3_batch_max_bytes }}
+{% endif %}

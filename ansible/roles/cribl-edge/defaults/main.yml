@@ -1,0 +1,62 @@
+# =============================================================================
+# roles/cribl-edge/defaults/main.yml
+# =============================================================================
+# WHY: Cribl Edge is the OTHER forwarding agent (PLAN §3), the parity counterpart
+# to the vector-agent role. It monitors the SAME generator output file, adds the
+# SAME hop_ts.agent field via an Eval function, and forwards over the SAME
+# NDJSON-over-HTTP transport / SAME S3 batch constants (PLAN §4.4, §4.5). The
+# whole point of the experiment is that hop COUNT — not agent vendor — is the
+# variable, so these must match role vector-agent field-for-field.
+#
+# STANDALONE MODE (not fleet-managed): Cribl Edge can run either fleet-managed
+# (reporting to a Cribl leader) or standalone. We choose STANDALONE and deliver
+# config as files under $CRIBL_HOME/local/. WHY: fleet management would add a
+# leader dependency and a control-plane config-distribution path that is
+# irrelevant to hop latency and would couple the agent to the Cribl Stream
+# leader's availability. Standalone keeps the agent self-contained and its
+# config reproducible from the repo (PLAN §7 config-as-files).
+---
+# --- PINNED Cribl version --------------------------------------------------
+# Pinned; exact deployed version recorded to evidence (PLAN §7). Cribl publishes
+# a moving "latest" URL and versioned downloads; we pin the version string.
+cribl_edge_version: "4.13.0"
+
+# Cribl provides a combined package; Edge is launched in edge mode. Download
+# uses the versioned CDN path.
+cribl_edge_download_linux: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl-{{ cribl_edge_version }}-linux-x64.tgz"
+cribl_edge_download_win: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl-{{ cribl_edge_version }}-windows-x64.zip"
+
+# CRIBL_HOME install roots.
+cribl_home_linux: /opt/cribl
+cribl_home_win: C:\Cribl
+cribl_edge_service_name: cribl
+
+# Config lives under $CRIBL_HOME/local/cribl/ (standalone file-based config).
+cribl_edge_local_linux: /opt/cribl/local/cribl
+cribl_edge_local_win: C:\Cribl\local\cribl
+
+# --- Source: generator output file to monitor (parity with vector-agent) ----
+cribl_edge_source_path_linux: /opt/llt/generator/out/events.ndjson
+cribl_edge_source_path_win: C:\llt\generator\out\events.ndjson
+
+# --- Scenario wiring (injected per run) ------------------------------------
+scenario: "s1"
+
+# Tier-1 aggregator NLB DNS (Cribl stack) — HTTP target for S1/S2. NOTE: even
+# with the Cribl EDGE agent, PLAN §4.4 mandates HTTP NDJSON to the aggregator
+# NLB; when aggregator=cs the target is the Cribl worker t1 NLB, when the matrix
+# pairs ce+vagg the target is the Vector t1 NLB. The orchestrator passes the
+# correct NLB DNS for the active aggregator stack via this var.
+cribl_edge_agg_t1_nlb: "llt-cs-t1-nlb.internal.invalid"
+cribl_edge_agg_t1_port: 8080             # Tier-1 :8080 (PLAN §4.4)
+
+# Landing bucket for S3/S4. As with the NLB, the orchestrator passes the landing
+# bucket matching the active aggregator stack (vagg vs cs landing bucket).
+cribl_edge_landing_bucket: "llt-landing-cs-REPLACE"
+cribl_edge_aws_region: "{{ llt_aws_region | default('us-east-2') }}"
+
+# --- Batch constants — CONTROLLED CONSTANT (PLAN §4.5), identical to Vector --
+cribl_edge_s3_flush_secs: 5              # S3 flush 5 s (== Vector timeout_secs)
+cribl_edge_s3_max_bytes: 10485760       # 10 MB (== Vector max_bytes)
+
+run_id: ""

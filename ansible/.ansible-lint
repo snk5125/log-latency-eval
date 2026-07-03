@@ -1,0 +1,24 @@
+# =============================================================================
+# .ansible-lint — llt Ansible lint config
+# =============================================================================
+# skip_list rationale:
+#   role-name: PLAN §6 defines the role directory names with HYPHENS
+#     (event-generator, vector-agent, vector-aggregator, cribl-edge,
+#     cribl-leader, cribl-worker, time-sync). ansible-lint's default idiom
+#     wants ^[a-z][a-z0-9_]*$ (underscores). The PLAN is the binding spec
+#     (PLAN §7), so we keep the hyphenated names it mandates and skip this
+#     stylistic rule rather than diverge from the repo layout the other
+#     subagents and the harness reference.
+# =============================================================================
+skip_list:
+  - role-name
+
+# The production inventory is the amazon.aws.aws_ec2 dynamic plugin, which needs
+# live AWS credentials to parse. Lint has no creds in CI/offline contexts, so do
+# not treat inventory-source parse failures as lint findings.
+exclude_paths:
+  - inventories/
+
+# min profile: this is infra glue, not a published Galaxy role; enforce the
+# baseline correctness rules without the stricter production/shared profiles.
+profile: min

@@ -1,0 +1,45 @@
+# {{ ansible_managed }}
+# Cribl worker outputs — group {{ cribl_worker_group }}, scenario {{ scenario }}.
+# MIRRORS vector-aggregator sinks:
+#   t1 + S1/S3 -> final S3 (5s/10MB)
+#   t1 + S2/S4 -> Webhook NDJSON to Tier-2 NLB :8081 (1s)
+#   t2         -> final S3 (5s/10MB)
+outputs:
+{% if cribl_worker_group == 't1' %}
+{% if scenario in ['s1', 's3'] %}
+  final_s3:
+    type: s3
+    bucket: "{{ cribl_final_bucket }}"
+    region: "{{ cribl_aws_region }}"
+    # Partition final/{run_id}/{host_os}/ — host_os is a per-event field, so use
+    # Cribl field templating. Identical key scheme to Vector (PLAN §5.1).
+    destPath: "final/{{ run_id }}/${host_os}"
+    format: ndjson
+    compress: none
+    # CONTROLLED CONSTANT (PLAN §4.5): 5 s flush / 10 MB — identical to Vector.
+    maxFileSizeMB: {{ cribl_s3_max_bytes_mb }}
+    maxFileOpenTimeSec: {{ cribl_s3_flush_secs }}
+    maxFileIdleTimeSec: {{ cribl_s3_flush_secs }}
+{% else %}
+  to_t2:
+    type: webhook
+    url: "http://{{ cribl_agg_t2_nlb }}:{{ cribl_t2_http_port }}"
+    method: POST
+    format: ndjson
+    flushPeriodSec: {{ cribl_http_flush_secs }}   # 1 s inter-tier (== Vector)
+    compress: none
+    tls:
+      disabled: true
+{% endif %}
+{% else %}
+  final_s3:
+    type: s3
+    bucket: "{{ cribl_final_bucket }}"
+    region: "{{ cribl_aws_region }}"
+    destPath: "final/{{ run_id }}/${host_os}"
+    format: ndjson
+    compress: none
+    maxFileSizeMB: {{ cribl_s3_max_bytes_mb }}
+    maxFileOpenTimeSec: {{ cribl_s3_flush_secs }}
+    maxFileIdleTimeSec: {{ cribl_s3_flush_secs }}
+{% endif %}

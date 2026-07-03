@@ -1,0 +1,52 @@
+# =============================================================================
+# roles/event-generator/tasks/linux.yml
+# =============================================================================
+---
+- name: Ensure generator directories exist (Linux)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ eventgen_dir_linux }}"
+    - "{{ eventgen_dir_linux }}/out"
+
+- name: Fetch eventgen.py from the artifacts bucket (Linux)
+  amazon.aws.s3_object:
+    bucket: "{{ eventgen_s3_uri | regex_replace('^s3://([^/]+)/.*$', '\\1') }}"
+    object: "{{ eventgen_s3_uri | regex_replace('^s3://[^/]+/(.*)$', '\\1') }}"
+    dest: "{{ eventgen_bin_linux }}"
+    mode: get
+    region: "{{ llt_aws_region }}"
+    profile: "{{ llt_logging_profile | default(omit) }}"
+  delegate_to: localhost
+  # Download on the control node from the logging-account artifacts bucket, then
+  # push to the host over SSM (next task). We do this via control node because
+  # the artifacts bucket is in the logging account (PLAN §4.3) and cross-account
+  # host-side reads would need extra bucket policy; control-node profile is clean.
+
+- name: Stage eventgen.py onto the host (Linux, over SSM)
+  ansible.builtin.copy:
+    src: "{{ eventgen_bin_linux }}"    # fetched to control node above
+    dest: "{{ eventgen_bin_linux }}"
+    mode: "0755"
+  # NOTE: src/dest share the path because the control-node scratch mirrors the
+  # target path; the aws_ssm connection brokers the transfer via the artifacts
+  # bucket (PLAN §4.2).
+
+- name: Install eventgen systemd unit (Linux)
+  ansible.builtin.template:
+    src: eventgen.service.j2
+    dest: /etc/systemd/system/{{ eventgen_win_service_name }}.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Ensure eventgen service is STOPPED and DISABLED (orchestrator-controlled)
+  ansible.builtin.systemd:
+    name: "{{ eventgen_win_service_name }}"
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  # WHY stopped/disabled: the orchestrator starts the generator per-run via SSM
+  # to control the warm-up/measurement window (PLAN §4.2). It must NOT autostart
+  # on boot or on config push.

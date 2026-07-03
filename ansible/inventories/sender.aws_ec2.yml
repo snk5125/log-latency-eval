@@ -1,0 +1,62 @@
+# =============================================================================
+# inventories/sender.aws_ec2.yml — dynamic EC2 inventory, SENDER account (llt)
+# =============================================================================
+# Discovers the sender-account hosts (generator Linux/Windows + forwarding
+# agents) by tag (PLAN §7). See inventories/README.md for the two-file,
+# one-profile-each rationale. aws_profile is type:str, so ONE profile per file.
+#
+# Env vars (exported by scripts/setup.sh; no secrets in repo, PLAN §7):
+#   LLT_AWS_PROFILE_SENDER  e.g. "llt-sender"
+#   LLT_AWS_REGION          e.g. "us-east-2"  (single region, PLAN §4.1)
+# =============================================================================
+---
+plugin: amazon.aws.aws_ec2
+
+# Single region for both accounts (PLAN §4.1 default us-east-2, overridable).
+regions:
+  - "{{ lookup('ansible.builtin.env', 'LLT_AWS_REGION') | default('us-east-2', true) }}"
+
+# SENDER account profile (single string — plugin requires a scalar).
+aws_profile: "{{ lookup('ansible.builtin.env', 'LLT_AWS_PROFILE_SENDER') | default('llt-sender', true) }}"
+
+# Hard scope: only this experiment's running instances (PLAN §7 Project=llt).
+filters:
+  tag:Project: llt
+  instance-state-name:
+    - running
+
+# Connection target for aws_ssm is the instance-id (no IP path, PLAN §4.2).
+hostnames:
+  - instance-id
+
+# Groups derived from tags (PLAN §7): role_generator, stack_vector/cribl,
+# os_linux/os_windows. Identical keyed_groups in both inventory files so the
+# unioned group set is consistent across accounts.
+keyed_groups:
+  - key: tags.Role | lower | replace('-', '_')
+    prefix: role
+    separator: _
+  - key: tags.Stack | lower
+    prefix: stack
+    separator: _
+  - key: tags.Os | lower
+    prefix: os
+    separator: _
+
+compose:
+  llt_role: tags.Role | default('') | lower
+  llt_stack: tags.Stack | default('') | lower
+  llt_os: tags.Os | default('') | lower
+  llt_private_ip: private_ip_address
+  llt_instance_id: instance_id
+  # Per-host SSM profile: hosts discovered by THIS file live in the SENDER
+  # account, so the aws_ssm connection must use the sender profile. This
+  # per-host value overrides the group_vars default (generated_infra.yml),
+  # letting one play span both accounts with correct credentials.
+  llt_ssm_profile: lookup('ansible.builtin.env', 'LLT_AWS_PROFILE_SENDER') | default('llt-sender', true)
+
+strict: false
+cache: true
+cache_plugin: jsonfile
+cache_connection: /tmp/llt_ansible_inv_cache
+cache_timeout: 600

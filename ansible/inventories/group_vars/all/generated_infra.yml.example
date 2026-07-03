@@ -1,0 +1,26 @@
+---
+# EXAMPLE of the file rendered by scripts/gen-ansible-vars.sh after
+# `terraform apply`. The real generated_infra.yml is GITIGNORED because it
+# contains live account-specific resource identifiers. Shape only — values
+# here are placeholders.
+
+# --- Global plumbing (PLAN §4.1, §7) -----------------------------------------
+llt_aws_region: "us-east-2"
+llt_ssm_profile: "llt-sender"        # per-host override composed in inventories
+llt_logging_profile: "llt-logging"
+llt_artifacts_bucket: "llt-artifacts-111111111111"
+
+# --- Vector stack (agents reach T1 via PrivateLink endpoint DNS) -------------
+vector_agg_t1_nlb: "vpce-0abc123-x.vpce-svc-0abc123.us-east-2.vpce.amazonaws.com"
+vector_agg_t2_nlb: "llt-vagg-t2-nlb-0abc123.elb.us-east-2.amazonaws.com"
+vector_landing_bucket: "llt-landing-vagg-111111111111"
+vector_final_bucket: "llt-final-111111111111"
+vector_landing_sqs_url: "https://sqs.us-east-2.amazonaws.com/111111111111/llt-landing-vagg-q"
+
+# --- Cribl stack --------------------------------------------------------------
+cribl_edge_agg_t1_nlb: "vpce-0def456-x.vpce-svc-0def456.us-east-2.vpce.amazonaws.com"
+cribl_edge_landing_bucket: "llt-landing-cs-111111111111"
+cribl_agg_t2_nlb: "llt-cs-t2-nlb-0def456.elb.us-east-2.amazonaws.com"
+cribl_final_bucket: "llt-final-111111111111"
+cribl_landing_sqs_url: "https://sqs.us-east-2.amazonaws.com/111111111111/llt-landing-cs-q"
+cribl_leader_host: "10.20.1.50"

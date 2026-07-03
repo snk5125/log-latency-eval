@@ -1,0 +1,153 @@
+# =============================================================================
+# playbooks/configure-scenario.yml — re-template one matrix cell (config-only)
+# =============================================================================
+# WHY: PLAN §7 — "Scenario switching is config-only (Ansible re-templates
+# agent/aggregator configs per run); infrastructure is deployed once for all 48
+# runs." This playbook is invoked by the orchestrator (harness/orchestrator/
+# run_matrix.py) once per run to reconfigure ONLY the cell being tested and
+# restart the affected services. It does NOT reinstall anything.
+#
+# REQUIRED VARS (passed by orchestrator via -e):
+#   scenario   : s1 | s2 | s3 | s4        (PLAN §2 test cases)
+#   agent      : vec | ce                 (Vector | Cribl Edge — PLAN §3)
+#   aggregator : vagg | cs                (Vector | Cribl Stream — PLAN §3)
+#   volume     : 1k | 5k | 10k            (EPS tier — PLAN §3)
+#   run_id     : s{n}-{agent}-{agg}-{vol}-{YYYYMMDDTHHMMSSZ}  (PLAN §3)
+#
+# Plus deploy-time infra vars (from group_vars/extra-vars): llt_artifacts_bucket,
+# llt_aws_region, bucket names, NLB DNS names, SQS queue names, leader address.
+#
+# EFFICIENCY: only the cell's agent stack AND aggregator stack are touched.
+#   agent=vec  -> reconfigure Vector agent only (Cribl Edge left alone)
+#   agent=ce   -> reconfigure Cribl Edge only
+#   aggregator=vagg -> reconfigure Vector aggregators only
+#   aggregator=cs   -> reconfigure Cribl workers only
+# The generator config is always re-templated (run_id + EPS tier change per run).
+# =============================================================================
+---
+
+# -----------------------------------------------------------------------------
+# PLAY A: validate inputs once, cheaply, on localhost before touching hosts.
+# -----------------------------------------------------------------------------
+- name: Validate scenario cell inputs
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Assert required scenario vars are present and valid
+      ansible.builtin.assert:
+        that:
+          - scenario in ['s1', 's2', 's3', 's4']
+          - agent in ['vec', 'ce']
+          - aggregator in ['vagg', 'cs']
+          - volume in ['1k', '5k', '10k']
+          - run_id is defined and (run_id | length) > 0
+        fail_msg: >-
+          Invalid matrix cell. Require scenario∈s1..s4, agent∈vec|ce,
+          aggregator∈vagg|cs, volume∈1k|5k|10k, and a non-empty run_id.
+        success_msg: "Matrix cell {{ run_id }} validated."
+
+# -----------------------------------------------------------------------------
+# PLAY B: re-template the generator config on the ACTIVE generator pair only.
+# Only the pair matching the run's agent dimension generates (PLAN §4.2), so we
+# guard on llt_stack matching the requested agent tech.
+# -----------------------------------------------------------------------------
+- name: Re-template event generator config for this run
+  hosts: role_generator
+  gather_facts: true
+  vars:
+    ansible_connection: aws_ssm
+    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
+    ansible_aws_ssm_region: "{{ llt_aws_region }}"
+    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
+    # Map the cell's agent code to the stack tag so we only touch the active pair.
+    _agent_stack: "{{ 'vector' if agent == 'vec' else 'cribl' }}"
+  tasks:
+    - name: Re-run generator config templating (run_id + EPS tier)
+      ansible.builtin.include_role:
+        name: event-generator
+        tasks_from: configure.yml
+      when: llt_stack == _agent_stack
+
+# -----------------------------------------------------------------------------
+# PLAY C: re-template the AGENT config for the selected agent tech.
+# Vector agent path (agent=vec).
+# -----------------------------------------------------------------------------
+- name: Re-template Vector agent config for this scenario
+  hosts: role_generator
+  gather_facts: true
+  vars:
+    ansible_connection: aws_ssm
+    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
+    ansible_aws_ssm_region: "{{ llt_aws_region }}"
+    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
+  tasks:
+    - name: Re-template Vector agent config + restart
+      ansible.builtin.include_role:
+        name: vector-agent
+        tasks_from: configure.yml
+      when:
+        - agent == 'vec'
+        - llt_stack == 'vector'
+
+# Cribl Edge path (agent=ce).
+- name: Re-template Cribl Edge config for this scenario
+  hosts: role_generator
+  gather_facts: true
+  vars:
+    ansible_connection: aws_ssm
+    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
+    ansible_aws_ssm_region: "{{ llt_aws_region }}"
+    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
+  tasks:
+    - name: Re-template Cribl Edge config + restart
+      ansible.builtin.include_role:
+        name: cribl-edge
+        tasks_from: configure.yml
+      when:
+        - agent == 'ce'
+        - llt_stack == 'cribl'
+
+# -----------------------------------------------------------------------------
+# PLAY D: re-template the AGGREGATOR config for the selected aggregator tech.
+# Vector aggregator path (aggregator=vagg) — tier-1 + tier-2.
+# -----------------------------------------------------------------------------
+- name: Re-template Vector aggregator config for this scenario
+  hosts: role_agg_t1:role_agg_t2
+  gather_facts: true
+  vars:
+    ansible_connection: aws_ssm
+    ansible_shell_type: sh
+    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
+    ansible_aws_ssm_region: "{{ llt_aws_region }}"
+    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
+  tasks:
+    - name: Re-template Vector aggregator config + restart
+      ansible.builtin.include_role:
+        name: vector-aggregator
+        tasks_from: configure.yml
+      when:
+        - aggregator == 'vagg'
+        - llt_stack == 'vector'
+
+# Cribl Stream aggregator path (aggregator=cs) — worker groups t1/t2.
+- name: Re-template Cribl worker config for this scenario
+  hosts: role_agg_t1:role_agg_t2
+  gather_facts: true
+  vars:
+    ansible_connection: aws_ssm
+    ansible_shell_type: sh
+    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
+    ansible_aws_ssm_region: "{{ llt_aws_region }}"
+    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
+  tasks:
+    - name: Re-template Cribl worker config + restart
+      ansible.builtin.include_role:
+        name: cribl-worker
+        tasks_from: configure.yml
+      when:
+        - aggregator == 'cs'
+        - llt_stack == 'cribl'

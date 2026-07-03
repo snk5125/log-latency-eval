@@ -1,0 +1,79 @@
+# =============================================================================
+# roles/cribl-edge/tasks/configure.yml — scenario config as files + restart
+# =============================================================================
+# Delivers standalone config files under $CRIBL_HOME/local/cribl/ (PLAN §7
+# config-as-files) and restarts Cribl. Called at install AND standalone per-run
+# by configure-scenario.yml. Config MIRRORS the vector-agent role: file monitor
+# source, Eval adds hop_ts.agent, HTTP(S1/S2) or S3(S3/S4) destination.
+---
+# --- Linux ------------------------------------------------------------------
+- name: Ensure inputs/outputs/pipelines dirs exist (Linux)
+  ansible.builtin.file:
+    path: "{{ cribl_edge_local_linux }}"
+    state: directory
+    mode: "0755"
+  when: ansible_os_family != "Windows"
+
+- name: Template Cribl Edge inputs.yml (file monitor source) (Linux)
+  ansible.builtin.template:
+    src: inputs.yml.j2
+    dest: "{{ cribl_edge_local_linux }}/inputs.yml"
+    mode: "0644"
+  when: ansible_os_family != "Windows"
+  notify: Restart cribl edge (linux)
+
+- name: Template Cribl Edge pipelines (Eval adds hop_ts.agent) (Linux)
+  ansible.builtin.template:
+    src: pipelines.yml.j2
+    dest: "{{ cribl_edge_local_linux }}/pipelines.yml"
+    mode: "0644"
+  when: ansible_os_family != "Windows"
+  notify: Restart cribl edge (linux)
+
+- name: Template Cribl Edge outputs.yml (HTTP/S3 destination) (Linux)
+  ansible.builtin.template:
+    src: outputs.yml.j2
+    dest: "{{ cribl_edge_local_linux }}/outputs.yml"
+    mode: "0644"
+  when: ansible_os_family != "Windows"
+  notify: Restart cribl edge (linux)
+
+- name: Template Cribl Edge route (source->pipeline->dest) (Linux)
+  ansible.builtin.template:
+    src: route.yml.j2
+    dest: "{{ cribl_edge_local_linux }}/route.yml"
+    mode: "0644"
+  when: ansible_os_family != "Windows"
+  notify: Restart cribl edge (linux)
+
+# --- Windows ----------------------------------------------------------------
+- name: Template Cribl Edge inputs.yml (Windows)
+  ansible.windows.win_template:
+    src: inputs.yml.j2
+    dest: "{{ cribl_edge_local_win }}\\inputs.yml"
+  when: ansible_os_family == "Windows"
+  notify: Restart cribl edge (windows)
+
+- name: Template Cribl Edge pipelines.yml (Windows)
+  ansible.windows.win_template:
+    src: pipelines.yml.j2
+    dest: "{{ cribl_edge_local_win }}\\pipelines.yml"
+  when: ansible_os_family == "Windows"
+  notify: Restart cribl edge (windows)
+
+- name: Template Cribl Edge outputs.yml (Windows)
+  ansible.windows.win_template:
+    src: outputs.yml.j2
+    dest: "{{ cribl_edge_local_win }}\\outputs.yml"
+  when: ansible_os_family == "Windows"
+  notify: Restart cribl edge (windows)
+
+- name: Template Cribl Edge route.yml (Windows)
+  ansible.windows.win_template:
+    src: route.yml.j2
+    dest: "{{ cribl_edge_local_win }}\\route.yml"
+  when: ansible_os_family == "Windows"
+  notify: Restart cribl edge (windows)
+
+- name: Flush handlers so new scenario config is live before returning
+  ansible.builtin.meta: flush_handlers

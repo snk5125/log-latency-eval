@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# systemd unit for the llt event generator (PLAN §4.2 — orchestrator-controlled).
+[Unit]
+Description=llt event generator (latency test)
+After=network-online.target chronyd.service
+Wants=network-online.target
+# Require chrony so the clock is disciplined before generation begins (PLAN §5.3).
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {{ eventgen_bin_linux }} --config {{ eventgen_config_linux }}
+Restart=no
+# Restart=no: a crash must NOT silently relaunch mid-run and corrupt the seq
+# stream / measurement window; the orchestrator owns lifecycle (PLAN §4.2).
+Nice=-5
+# Slight priority bump so generation cadence is steady under load (noise ctrl).
+
+[Install]
+WantedBy=multi-user.target
+# Installed but DISABLED by the role; orchestrator enables/starts per run.

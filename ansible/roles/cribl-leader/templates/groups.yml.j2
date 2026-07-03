@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+# Cribl Stream worker-group definitions (PLAN §4.3). Workers self-assign to a
+# group by tag when they join (see cribl-worker role). Groups: t1 (tier-1) and
+# t2 (tier-2), matching the Vector aggregator two-tier topology for parity.
+groups:
+{% for g in cribl_worker_groups %}
+  {{ g }}:
+    description: "llt worker group {{ g }}"
+    # Config bundle for each group is delivered by the cribl-worker role, which
+    # mirrors the vector-aggregator source/eval/destination logic per tier.
+{% endfor %}

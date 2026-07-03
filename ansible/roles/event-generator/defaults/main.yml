@@ -1,0 +1,45 @@
+# =============================================================================
+# roles/event-generator/defaults/main.yml
+# =============================================================================
+# WHY: the generator (harness/generator/eventgen.py) emits the NDJSON events
+# whose t_gen_ns and per-hop hop_ts.* timestamps ARE the measurement (PLAN §5.1).
+# It is installed as an OS service but left STOPPED/DISABLED — the orchestrator
+# starts it per-run via SSM so warm-up/measurement windows are controlled
+# centrally (PLAN §4.2).
+---
+# S3 URI of the generator script in the artifacts bucket (PLAN §4.3). The
+# playbook fetches from here; templated so the bucket/acct is not hard-coded.
+# Example resolved value: s3://llt-artifacts-123456789012/harness/eventgen.py
+eventgen_s3_uri: "s3://{{ llt_artifacts_bucket }}/harness/generator/eventgen.py"
+
+# Local install paths.
+eventgen_dir_linux: /opt/llt/generator
+eventgen_bin_linux: /opt/llt/generator/eventgen.py
+eventgen_output_linux: /opt/llt/generator/out/events.ndjson   # agent tails this
+eventgen_config_linux: /opt/llt/generator/generator.json
+
+eventgen_dir_win: C:\llt\generator
+eventgen_bin_win: C:\llt\generator\eventgen.py
+eventgen_output_win: C:\llt\generator\out\events.ndjson       # agent tails this
+eventgen_config_win: C:\llt\generator\generator.json
+
+# --- Generator run parameters (overridden per-run by configure-scenario) -----
+# EPS tier for THIS host: 1000 / 5000 / 10000 (PLAN §3 volume dimension).
+# Default here is a safe idle value; the real value is injected per run.
+eventgen_eps: 1000
+
+# Fixed event size — 512 bytes padded (PLAN §5.1 "~512 bytes padded"). Constant
+# across all runs so event size is NOT a confound (PLAN isolates hop/volume).
+eventgen_event_size_bytes: 512
+
+# Warm-up seconds excluded from measurement (PLAN §3: 2 min warm-up + 10 min
+# measurement). The generator tags/handles warmup; orchestrator also windows it.
+eventgen_warmup_seconds: 120
+
+# run_id is injected per run (PLAN §3). Empty until configure-scenario sets it.
+run_id: ""
+
+# Windows service name (NSSM-wrapped).
+eventgen_win_service_name: llt-eventgen
+
+# Cribl Free / license note not relevant here; generator has no license.

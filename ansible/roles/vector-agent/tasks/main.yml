@@ -1,0 +1,14 @@
+# =============================================================================
+# roles/vector-agent/tasks/main.yml — install pinned Vector + initial config
+# =============================================================================
+---
+- name: Include Linux Vector agent install
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
+
+- name: Include Windows Vector agent install
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"
+
+- name: Template Vector agent config for the current scenario
+  ansible.builtin.include_tasks: configure.yml

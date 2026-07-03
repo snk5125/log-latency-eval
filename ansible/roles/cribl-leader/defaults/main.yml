@@ -1,0 +1,29 @@
+# =============================================================================
+# roles/cribl-leader/defaults/main.yml
+# =============================================================================
+# WHY: Cribl Stream runs distributed (PLAN §4.3) — one Leader coordinates two
+# worker groups (t1, t2). The leader holds the config bundle that workers pull.
+# LICENSE: Cribl Free (PLAN §4.3, §4.5 note) — ≤1 TB/day, all tiers well below.
+# The leader is Linux-only (single m6i.large, PLAN §4.3).
+---
+# Pinned Cribl version — SAME as cribl-edge for a single Cribl build across the
+# stack (parity + evidence, PLAN §7).
+cribl_version: "4.13.0"
+cribl_download_linux: "https://cdn.cribl.io/dl/{{ cribl_version }}/cribl-{{ cribl_version }}-linux-x64.tgz"
+
+cribl_home: /opt/cribl
+cribl_service_name: cribl
+
+# Distributed-mode worker groups (PLAN §4.3). t1 = tier-1 workers, t2 = tier-2.
+cribl_worker_groups:
+  - t1
+  - t2
+
+# Admin bootstrap. WHY generated-on-node: PLAN §7 forbids secrets in the repo.
+# The password is generated on the leader, stored ONLY on the node, and noted
+# for retrieval via SSM (never committed). Empty here means "generate".
+cribl_admin_password: ""      # generated on node if empty; see tasks/main.yml
+cribl_admin_password_file: /opt/cribl/local/cribl/.llt_admin_pw   # node-only
+
+# Leader API/UI port (Cribl default 9000). Workers reach the leader on this.
+cribl_leader_port: 9000

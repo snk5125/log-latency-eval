@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# Cribl Edge inputs — file monitor on the generator output (PARITY with the
+# Vector agent's `file` source; PLAN §5.2 gen->agent hop).
+inputs:
+  gen_file:
+    type: file
+    # Monitor the same NDJSON output file the generator writes.
+    filenames:
+      - "{{ cribl_edge_source_path_win if ansible_os_family == 'Windows' else cribl_edge_source_path_linux }}"
+    mode: replay        # read from beginning so warm-up is captured (windowed later)
+    idleTimeout: 30
+    # Each line is one NDJSON event (PLAN §5.1); no line-breaker merging.
+    breakerRulesets: []

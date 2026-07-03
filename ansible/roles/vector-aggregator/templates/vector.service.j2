@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+# systemd unit for the llt Vector AGGREGATOR (tier-1/tier-2).
+[Unit]
+Description=Vector aggregator (llt latency test)
+After=network-online.target chronyd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vector --config-yaml {{ vector_config_linux }}
+Restart=always
+RestartSec=2
+Environment=VECTOR_LOG=warn
+# Aggregators must self-heal transient blips; Restart=always is safe (stateless
+# forwarding + timestamping only, PLAN §5.1).
+
+[Install]
+WantedBy=multi-user.target

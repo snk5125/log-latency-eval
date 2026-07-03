@@ -1,0 +1,17 @@
+# =============================================================================
+# roles/vector-aggregator/tasks/configure.yml — scenario/tier config + restart
+# =============================================================================
+# Called at install AND standalone per-run by configure-scenario.yml. The
+# template branches on llt_role (agg_t1 vs agg_t2) and scenario.
+---
+- name: Template Vector aggregator config for this tier + scenario
+  ansible.builtin.template:
+    src: vector-agg.yaml.j2
+    dest: "{{ vector_config_linux }}"
+    mode: "0644"
+    validate: "/usr/bin/vector validate --config-yaml %s"
+  notify: Restart vagg
+  # validate: a tier that cannot parse its config would silently drop the run.
+
+- name: Flush handlers so the new scenario config is live before returning
+  ansible.builtin.meta: flush_handlers

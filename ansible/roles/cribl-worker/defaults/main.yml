@@ -1,0 +1,55 @@
+# =============================================================================
+# roles/cribl-worker/defaults/main.yml
+# =============================================================================
+# WHY: Cribl workers ARE the aggregator hops in the Cribl stack — the parity
+# counterpart to vector-aggregator. This role MUST mirror vector-aggregator
+# field-for-field (PLAN §8 build split, §4.4 parity):
+#   HTTP Raw source :8080 (t1) / :8081 (t2)
+#   S3 source via SQS (S3/S4 only, t1)
+#   Eval adds hop_ts.agg1 (t1) / hop_ts.agg2 (t2)  <- identical field names
+#   S3 destination 5s/10MB (identical batch constants)
+#   Webhook NDJSON t1->t2 (1s)  for S2/S4
+#
+# Config is delivered as files under the worker-group config path. PLAN §8
+# permits either the leader's config bundle OR direct local/ files; we deliver
+# direct group config files so the worker config is reproducible from the repo
+# and does not depend on interactive leader UI actions.
+---
+cribl_version: "4.13.0"
+cribl_download_linux: "https://cdn.cribl.io/dl/{{ cribl_version }}/cribl-{{ cribl_version }}-linux-x64.tgz"
+cribl_home: /opt/cribl
+cribl_service_name: cribl
+
+# Leader address workers join (PLAN §4.3). Supplied from Terraform output / the
+# leader's private IP at deploy time.
+cribl_leader_host: "llt-cs-leader.internal.invalid"
+cribl_leader_port: 9000
+
+# Worker group for THIS host: derived from the Role tag (agg-t1 -> t1, agg-t2 ->
+# t2). Computed in tasks from llt_role; default here is a placeholder.
+cribl_worker_group: "t1"
+
+# Group config path on the leader-managed worker: config for group <g> lives
+# under $CRIBL_HOME/groups/<g>/local/cribl/ in distributed mode.
+# (Rendered per-group in tasks.)
+
+# --- Ports (PLAN §4.4) — identical to vector-aggregator ---------------------
+cribl_t1_http_port: 8080
+cribl_t2_http_port: 8081
+
+# --- Scenario + run wiring (injected per run) -------------------------------
+scenario: "s1"
+run_id: ""
+cribl_aws_region: "{{ llt_aws_region | default('us-east-2') }}"
+
+# Tier-2 NLB DNS — where tier-1 workers forward in S2/S4.
+cribl_agg_t2_nlb: "llt-cs-t2-nlb.internal.invalid"
+
+# Final bucket + landing SQS (mirrors vector-aggregator).
+cribl_final_bucket: "llt-final-REPLACE"
+cribl_landing_sqs_url: "https://sqs.us-east-2.amazonaws.com/REPLACE/llt-landing-cs-q"
+
+# --- Batch constants — CONTROLLED CONSTANT (PLAN §4.5), identical to Vector --
+cribl_s3_flush_secs: 5              # ->S3: 5 s  (== Vector timeout_secs)
+cribl_s3_max_bytes_mb: 10          # 10 MB     (== Vector max_bytes)
+cribl_http_flush_secs: 1           # inter-tier HTTP: 1 s (== Vector http batch)

@@ -1,0 +1,14 @@
+# =============================================================================
+# roles/cribl-edge/tasks/main.yml — install pinned Cribl Edge (standalone)
+# =============================================================================
+---
+- name: Include Linux Cribl Edge install
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
+
+- name: Include Windows Cribl Edge install
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"
+
+- name: Template Cribl Edge config for the current scenario
+  ansible.builtin.include_tasks: configure.yml

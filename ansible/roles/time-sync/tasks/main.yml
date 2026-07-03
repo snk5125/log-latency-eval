@@ -1,0 +1,11 @@
+# =============================================================================
+# roles/time-sync/tasks/main.yml
+# =============================================================================
+---
+- name: Include Linux chrony configuration
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
+
+- name: Include Windows w32time configuration
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"

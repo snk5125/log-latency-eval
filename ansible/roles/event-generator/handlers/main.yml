@@ -1,0 +1,9 @@
+# =============================================================================
+# roles/event-generator/handlers/main.yml
+# =============================================================================
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  # Handler only reloads unit files; it never STARTS the generator — starting is
+  # the orchestrator's job per run (PLAN §4.2).

@@ -1,0 +1,21 @@
+# =============================================================================
+# roles/event-generator/tasks/configure.yml — per-run config (re-templated)
+# =============================================================================
+# Invoked by site.yml (initial) AND standalone by configure-scenario.yml per run
+# to refresh run_id / EPS tier WITHOUT reinstalling (PLAN §7 config-only switch).
+# Does NOT start the service — the orchestrator does that via SSM.
+---
+- name: Template generator config (Linux)
+  ansible.builtin.template:
+    src: generator.json.j2
+    dest: "{{ eventgen_config_linux }}"
+    mode: "0644"
+  when: ansible_os_family != "Windows"
+  # Carries run_id, EPS tier, event size (512B), warmup, output path, and the
+  # host_os/host_id used in every emitted event (PLAN §5.1 schema).
+
+- name: Template generator config (Windows)
+  ansible.windows.win_template:
+    src: generator.json.j2
+    dest: "{{ eventgen_config_win }}"
+  when: ansible_os_family == "Windows"

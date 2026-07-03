@@ -1,0 +1,32 @@
+# =============================================================================
+# roles/time-sync/tasks/linux.yml — chrony -> AWS Time Sync ONLY
+# =============================================================================
+---
+- name: Ensure chrony is installed
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+
+- name: Deploy chrony.conf pointed ONLY at AWS Time Sync
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart chronyd
+  # WHY only-one-source: mixing public NTP pools with the link-local source adds
+  # cross-source selection jitter; we want the single lowest-jitter reference so
+  # all hosts converge to the same time base (PLAN §5.3).
+
+- name: Ensure chronyd is enabled and started
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: started
+
+- name: Force an immediate step so sync is tight before any run
+  ansible.builtin.command: chronyc makestep
+  changed_when: false
+  # Step (not slew) the clock now so the very first run's assertion (< 1 ms,
+  # PLAN §5.3) is not gated on slow slew convergence.

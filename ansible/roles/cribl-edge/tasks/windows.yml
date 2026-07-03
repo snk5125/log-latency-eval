@@ -1,0 +1,35 @@
+# =============================================================================
+# roles/cribl-edge/tasks/windows.yml — install pinned Cribl Edge (zip)
+# =============================================================================
+---
+- name: Download pinned Cribl package (Windows)
+  ansible.windows.win_get_url:
+    url: "{{ cribl_edge_download_win }}"
+    dest: "C:\\llt\\cribl-{{ cribl_edge_version }}.zip"
+
+- name: Unzip Cribl (Windows)
+  community.windows.win_unzip:
+    src: "C:\\llt\\cribl-{{ cribl_edge_version }}.zip"
+    dest: "C:\\"
+    # unpacks to C:\Cribl (== cribl_home_win).
+
+- name: Ensure standalone local config directory exists (Windows)
+  ansible.windows.win_file:
+    path: "{{ cribl_edge_local_win }}"
+    state: directory
+
+- name: Record exact deployed Cribl version as evidence (Windows)
+  ansible.windows.win_shell: '& "{{ cribl_home_win }}\bin\cribl.exe" version'
+  register: _cribl_edge_version_out_win
+  changed_when: false
+  failed_when: false
+
+- name: Install Cribl Edge as a Windows service via NSSM (edge mode)
+  community.windows.win_nssm:
+    name: "{{ cribl_edge_service_name }}"
+    application: "{{ cribl_home_win }}\\bin\\cribl.exe"
+    arguments: 'start'
+    state: present
+    start_mode: auto
+  # Edge mode is selected by the mode file written under local/ (see configure);
+  # Windows has no boot-start helper, so NSSM supervises `cribl start`.

@@ -1,0 +1,210 @@
+# =============================================================================
+# playbooks/assert-clocks.yml — pre-run clock discipline assertion + evidence
+# =============================================================================
+# WHY: PLAN §5.3 — "Ansible asserts sync before each run (chrony tracking offset
+# < 1 ms; w32tm /query /status stripchart bound < 5 ms) and records the values
+# as run evidence. Clock error bounds are reported as a stated constraint."
+#
+# The orchestrator calls this immediately before each measurement run. It:
+#   1. parses chrony `chronyc tracking` on Linux and asserts |offset| < 1 ms;
+#   2. parses `w32tm /stripchart` on Windows and asserts bound < 5 ms;
+#   3. registers the values and uploads a JSON evidence blob per host to the
+#      artifacts S3 bucket under clock-evidence/{run_id}/ (PLAN §4.3 artifacts,
+#      §5.3 record values as run evidence).
+#
+# REQUIRED VARS:
+#   run_id                 : current run identifier (PLAN §3)
+#   llt_artifacts_bucket   : llt-artifacts-<acct> (PLAN §4.3)
+#   llt_aws_region         : single region (PLAN §4.1)
+#   llt_time_sync_source   : 169.254.169.123 (AWS Time Sync; used by w32tm probe)
+#
+# THRESHOLDS (overridable): clock_offset_max_ms_linux=1, clock_bound_max_ms_win=5
+# =============================================================================
+---
+
+# -----------------------------------------------------------------------------
+# LINUX: chrony tracking offset assertion.
+# `chronyc tracking` prints a line: "Last offset  : -0.000012345 seconds".
+# We parse that, convert to ms, and assert |offset_ms| < threshold.
+# -----------------------------------------------------------------------------
+- name: Assert Linux clock discipline (chrony) and record evidence
+  hosts: os_linux
+  gather_facts: true
+  vars:
+    ansible_connection: aws_ssm
+    ansible_shell_type: sh
+    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
+    ansible_aws_ssm_region: "{{ llt_aws_region }}"
+    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
+    clock_offset_max_ms_linux: 1.0
+  tasks:
+    - name: Run chronyc tracking
+      ansible.builtin.command: chronyc tracking
+      register: chrony_tracking
+      changed_when: false
+      # Never mutate state; this is a read-only measurement.
+
+    - name: Parse chrony "Last offset" (seconds) from tracking output
+      ansible.builtin.set_fact:
+        # Grab the signed float after "Last offset". regex_search returns the
+        # capture group; convert seconds -> ms and take absolute value.
+        _chrony_offset_seconds: >-
+          {{ (chrony_tracking.stdout
+              | regex_search('Last offset\s*:\s*([+-]?[0-9.]+)\s*seconds', '\1'))
+             | first | float }}
+
+    - name: Compute absolute chrony offset in milliseconds
+      ansible.builtin.set_fact:
+        chrony_offset_ms_abs: "{{ (_chrony_offset_seconds | float * 1000.0) | abs }}"
+
+    - name: Assert chrony offset within 1 ms bound (PLAN §5.3)
+      ansible.builtin.assert:
+        that:
+          - (chrony_offset_ms_abs | float) < (clock_offset_max_ms_linux | float)
+        fail_msg: >-
+          Clock discipline FAILED on {{ inventory_hostname }}:
+          |offset|={{ chrony_offset_ms_abs }} ms >= {{ clock_offset_max_ms_linux }} ms.
+          Run aborted — measurement invalid at this sync error.
+        success_msg: >-
+          Clock OK on {{ inventory_hostname }}:
+          |offset|={{ chrony_offset_ms_abs }} ms < {{ clock_offset_max_ms_linux }} ms.
+      # Do not stop the whole batch on one host until evidence is written; we
+      # want the evidence blob for the failing host too.
+      ignore_errors: true
+      register: chrony_assert
+
+    - name: Build clock evidence blob (Linux)
+      ansible.builtin.set_fact:
+        _clock_evidence:
+          run_id: "{{ run_id }}"
+          host: "{{ inventory_hostname }}"
+          host_os: "linux"
+          host_id: "{{ ansible_hostname | default(inventory_hostname) }}"
+          time_source: "169.254.169.123"
+          method: "chronyc tracking"
+          offset_ms_abs: "{{ chrony_offset_ms_abs | float }}"
+          threshold_ms: "{{ clock_offset_max_ms_linux | float }}"
+          passed: "{{ not (chrony_assert.failed | default(false)) }}"
+          raw: "{{ chrony_tracking.stdout }}"
+          captured_at_utc: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Write clock evidence JSON locally (control node scratch)
+      ansible.builtin.copy:
+        content: "{{ _clock_evidence | to_nice_json }}"
+        dest: "/tmp/llt_clock_{{ run_id }}_{{ inventory_hostname }}.json"
+        mode: "0644"
+      delegate_to: localhost
+      # Delegate the file write to the control node so we can push it to S3 with
+      # a single profile-aware aws_s3 call (below), independent of host OS.
+
+    - name: Upload Linux clock evidence to artifacts S3 bucket (PLAN §5.3)
+      amazon.aws.s3_object:
+        bucket: "{{ llt_artifacts_bucket }}"
+        object: "clock-evidence/{{ run_id }}/{{ inventory_hostname }}.json"
+        src: "/tmp/llt_clock_{{ run_id }}_{{ inventory_hostname }}.json"
+        mode: put
+        region: "{{ llt_aws_region }}"
+        profile: "{{ llt_logging_profile | default(omit) }}"
+      delegate_to: localhost
+      # Bucket lives in the logging account (PLAN §4.3), so use the logging
+      # profile for the PutObject, not the host's SSM session profile.
+
+    - name: Fail the run now if this host's clock assertion failed
+      ansible.builtin.assert:
+        that:
+          - not (chrony_assert.failed | default(false))
+        fail_msg: "Aborting: clock evidence recorded but {{ inventory_hostname }} is out of bound."
+
+# -----------------------------------------------------------------------------
+# WINDOWS: w32tm stripchart bound assertion.
+# `w32tm /stripchart /computer:<source> /samples:5 /dataonly` emits per-sample
+# offsets like "+00.0012345s". We parse the max |offset| across samples and
+# assert it is < 5 ms (PLAN §5.3 — Windows sync is coarser than chrony).
+# -----------------------------------------------------------------------------
+- name: Assert Windows clock discipline (w32tm) and record evidence
+  hosts: os_windows
+  gather_facts: true
+  vars:
+    ansible_connection: aws_ssm
+    ansible_shell_type: powershell
+    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
+    ansible_aws_ssm_region: "{{ llt_aws_region }}"
+    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
+    clock_bound_max_ms_win: 5.0
+    llt_time_sync_source: "169.254.169.123"
+  tasks:
+    - name: Run w32tm stripchart against AWS Time Sync source
+      ansible.windows.win_shell: >-
+        w32tm /stripchart /computer:{{ llt_time_sync_source }}
+        /samples:5 /dataonly
+      register: w32tm_strip
+      changed_when: false
+      # Read-only probe; /dataonly suppresses the ASCII chart, leaving parseable
+      # "<time>, <offset>s" rows.
+
+    - name: Extract all sample offsets (seconds) from stripchart output
+      ansible.builtin.set_fact:
+        # Each data row ends with an offset like "+00.0012345s". Grab all of them.
+        _win_offsets_sec: >-
+          {{ w32tm_strip.stdout
+             | regex_findall('([+-][0-9]+\.[0-9]+)s') }}
+
+    - name: Compute max absolute Windows offset in milliseconds
+      ansible.builtin.set_fact:
+        win_offset_ms_max: >-
+          {{ (_win_offsets_sec
+              | map('float')
+              | map('abs')
+              | max
+              | default(0.0)) * 1000.0 }}
+
+    - name: Assert Windows stripchart bound within 5 ms (PLAN §5.3)
+      ansible.builtin.assert:
+        that:
+          - (win_offset_ms_max | float) < (clock_bound_max_ms_win | float)
+        fail_msg: >-
+          Clock discipline FAILED on {{ inventory_hostname }}:
+          max|offset|={{ win_offset_ms_max }} ms >= {{ clock_bound_max_ms_win }} ms.
+        success_msg: >-
+          Clock OK on {{ inventory_hostname }}:
+          max|offset|={{ win_offset_ms_max }} ms < {{ clock_bound_max_ms_win }} ms.
+      ignore_errors: true
+      register: w32tm_assert
+
+    - name: Build clock evidence blob (Windows)
+      ansible.builtin.set_fact:
+        _clock_evidence_win:
+          run_id: "{{ run_id }}"
+          host: "{{ inventory_hostname }}"
+          host_os: "windows"
+          time_source: "{{ llt_time_sync_source }}"
+          method: "w32tm /stripchart /dataonly (5 samples)"
+          offset_ms_max_abs: "{{ win_offset_ms_max | float }}"
+          threshold_ms: "{{ clock_bound_max_ms_win | float }}"
+          passed: "{{ not (w32tm_assert.failed | default(false)) }}"
+          samples_sec: "{{ _win_offsets_sec }}"
+          raw: "{{ w32tm_strip.stdout }}"
+          captured_at_utc: "{{ ansible_date_time.iso8601 | default('') }}"
+
+    - name: Write Windows clock evidence JSON locally (control node scratch)
+      ansible.builtin.copy:
+        content: "{{ _clock_evidence_win | to_nice_json }}"
+        dest: "/tmp/llt_clock_{{ run_id }}_{{ inventory_hostname }}.json"
+        mode: "0644"
+      delegate_to: localhost
+
+    - name: Upload Windows clock evidence to artifacts S3 bucket (PLAN §5.3)
+      amazon.aws.s3_object:
+        bucket: "{{ llt_artifacts_bucket }}"
+        object: "clock-evidence/{{ run_id }}/{{ inventory_hostname }}.json"
+        src: "/tmp/llt_clock_{{ run_id }}_{{ inventory_hostname }}.json"
+        mode: put
+        region: "{{ llt_aws_region }}"
+        profile: "{{ llt_logging_profile | default(omit) }}"
+      delegate_to: localhost
+
+    - name: Fail the run now if this Windows host's clock assertion failed
+      ansible.builtin.assert:
+        that:
+          - not (w32tm_assert.failed | default(false))
+        fail_msg: "Aborting: clock evidence recorded but {{ inventory_hostname }} is out of bound."

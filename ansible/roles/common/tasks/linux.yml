@@ -1,0 +1,40 @@
+# =============================================================================
+# roles/common/tasks/linux.yml — Amazon Linux 2023 base prep
+# =============================================================================
+---
+- name: Install base packages (python3, archive tools, chrony)
+  ansible.builtin.dnf:
+    name: "{{ common_linux_packages }}"
+    state: present
+  # WHY: these are prerequisites for module execution over SSM and for fetching
+  # Vector/Cribl/harness artifacts from the S3 artifacts bucket (PLAN §4.3).
+
+- name: Ensure /opt/llt working directory exists
+  ansible.builtin.file:
+    path: /opt/llt
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  # Central location for generator output files and fetched artifacts, referenced
+  # by later roles (generator output path, config staging).
+
+# --- Noise control: disable automatic background updates during the experiment
+- name: Disable dnf-automatic timer during runs (noise control)
+  ansible.builtin.systemd:
+    name: dnf-automatic.timer
+    enabled: false
+    state: stopped
+  when: common_disable_auto_updates | bool
+  failed_when: false
+  # WHY: an automatic dnf update mid-run injects CPU/IO/clock perturbation that
+  # would contaminate latency samples (PLAN §1). failed_when:false because the
+  # timer may not be installed on a minimal AL2023 image — absence is fine.
+
+- name: Mask dnf-automatic-install timer if present (noise control)
+  ansible.builtin.systemd:
+    name: dnf-automatic-install.timer
+    enabled: false
+    state: stopped
+  when: common_disable_auto_updates | bool
+  failed_when: false

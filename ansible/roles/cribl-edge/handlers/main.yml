@@ -1,0 +1,15 @@
+# =============================================================================
+# roles/cribl-edge/handlers/main.yml
+# =============================================================================
+---
+- name: Restart cribl edge (linux)
+  ansible.builtin.systemd:
+    name: "{{ cribl_edge_service_name }}"
+    state: restarted
+    enabled: true
+  # Standalone Edge reloads local/ config on restart.
+
+- name: Restart cribl edge (windows)
+  ansible.windows.win_service:
+    name: "{{ cribl_edge_service_name }}"
+    state: restarted

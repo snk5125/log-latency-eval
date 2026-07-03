@@ -1,0 +1,54 @@
+# =============================================================================
+# roles/event-generator/tasks/windows.yml
+# =============================================================================
+# Wrap eventgen.py as a Windows service via NSSM (community.windows.win_nssm),
+# installed STOPPED/DISABLED so the orchestrator controls the run window
+# (PLAN §4.2). NSSM is chosen over a raw scheduled task because it gives a real
+# service with clean start/stop semantics over SSM, matching the Linux systemd
+# model for parity of control.
+---
+- name: Ensure generator directories exist (Windows)
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ eventgen_dir_win }}"
+    - "{{ eventgen_dir_win }}\\out"
+
+- name: Fetch eventgen.py from the artifacts bucket to control node (Windows)
+  amazon.aws.s3_object:
+    bucket: "{{ eventgen_s3_uri | regex_replace('^s3://([^/]+)/.*$', '\\1') }}"
+    object: "{{ eventgen_s3_uri | regex_replace('^s3://[^/]+/(.*)$', '\\1') }}"
+    dest: "/tmp/llt_eventgen.py"
+    mode: get
+    region: "{{ llt_aws_region }}"
+    profile: "{{ llt_logging_profile | default(omit) }}"
+  delegate_to: localhost
+
+- name: Stage eventgen.py onto the Windows host (over SSM)
+  ansible.windows.win_copy:
+    src: "/tmp/llt_eventgen.py"
+    dest: "{{ eventgen_bin_win }}"
+
+- name: Locate python interpreter on Windows
+  ansible.windows.win_shell: (Get-Command python).Source
+  register: _win_python
+  changed_when: false
+  # Windows generator hosts have Python installed at image-build time; NSSM needs
+  # the absolute interpreter path to launch eventgen.py.
+
+- name: Install eventgen as an NSSM service (Windows)
+  community.windows.win_nssm:
+    name: "{{ eventgen_win_service_name }}"
+    application: "{{ _win_python.stdout | trim }}"
+    arguments: '"{{ eventgen_bin_win }}" --config "{{ eventgen_config_win }}"'
+    state: present
+    start_mode: manual
+  # start_mode: manual == not auto-start on boot; the orchestrator starts it
+  # per-run via SSM (PLAN §4.2).
+
+- name: Ensure eventgen service is STOPPED (orchestrator-controlled)
+  ansible.windows.win_service:
+    name: "{{ eventgen_win_service_name }}"
+    state: stopped
+    start_mode: manual

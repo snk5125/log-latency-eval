@@ -1,0 +1,54 @@
+# =============================================================================
+# roles/cribl-worker/tasks/main.yml — install worker, join leader, push config
+# =============================================================================
+# Workers are Linux-only (PLAN §4.3 m6i.xlarge). Group derives from the Role tag.
+---
+- name: Derive worker group from Role tag (agg_t1->t1, agg_t2->t2)
+  ansible.builtin.set_fact:
+    cribl_worker_group: "{{ 't1' if llt_role == 'agg_t1' else 't2' }}"
+  # PLAN §4.3 worker groups mirror the Vector two-tier topology for parity.
+
+- name: Download pinned Cribl package (worker)
+  ansible.builtin.get_url:
+    url: "{{ cribl_download_linux }}"
+    dest: "/tmp/cribl-{{ cribl_version }}.tgz"
+    mode: "0644"
+
+- name: Unpack Cribl (worker)
+  ansible.builtin.unarchive:
+    src: "/tmp/cribl-{{ cribl_version }}.tgz"
+    dest: /opt
+    remote_src: true
+
+- name: Record exact deployed Cribl version as evidence (worker)
+  ansible.builtin.command: "{{ cribl_home }}/bin/cribl version"
+  register: _cribl_worker_version
+  changed_when: false
+  failed_when: false
+
+- name: Configure worker to join the leader (distributed worker mode)
+  ansible.builtin.command: >-
+    {{ cribl_home }}/bin/cribl mode-worker
+    -H {{ cribl_leader_host }} -p {{ cribl_leader_port }}
+    -u {{ cribl_worker_group }}
+  register: _cribl_mode_worker
+  changed_when: "'already' not in (_cribl_mode_worker.stdout | default(''))"
+  failed_when: false
+  # mode-worker points this node at the leader (PLAN §4.3) and tags it into its
+  # worker group (t1/t2) so it receives that group's config bundle.
+
+- name: Push this worker group's scenario config
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Enable Cribl worker boot-start service
+  ansible.builtin.command: >-
+    {{ cribl_home }}/bin/cribl boot-start enable -u root
+  register: _cribl_worker_bootstart
+  changed_when: "'already' not in (_cribl_worker_bootstart.stdout | default(''))"
+  failed_when: false
+
+- name: Ensure worker service is started
+  ansible.builtin.systemd:
+    name: "{{ cribl_service_name }}"
+    state: started
+    enabled: true

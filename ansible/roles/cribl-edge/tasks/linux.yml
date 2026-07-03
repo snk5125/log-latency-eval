@@ -1,0 +1,38 @@
+# =============================================================================
+# roles/cribl-edge/tasks/linux.yml — install pinned Cribl Edge (tgz), standalone
+# =============================================================================
+---
+- name: Download pinned Cribl package (Linux)
+  ansible.builtin.get_url:
+    url: "{{ cribl_edge_download_linux }}"
+    dest: "/tmp/cribl-{{ cribl_edge_version }}.tgz"
+    mode: "0644"
+
+- name: Ensure /opt exists and unpack Cribl (Linux)
+  ansible.builtin.unarchive:
+    src: "/tmp/cribl-{{ cribl_edge_version }}.tgz"
+    dest: /opt
+    remote_src: true
+    # tgz unpacks to /opt/cribl (== cribl_home_linux).
+
+- name: Ensure standalone local config directory exists (Linux)
+  ansible.builtin.file:
+    path: "{{ cribl_edge_local_linux }}"
+    state: directory
+    mode: "0755"
+  # $CRIBL_HOME/local/cribl — where standalone (non-fleet) config files live.
+
+- name: Record exact deployed Cribl version as evidence (Linux)
+  ansible.builtin.command: "{{ cribl_home_linux }}/bin/cribl version"
+  register: _cribl_edge_version_out
+  changed_when: false
+  failed_when: false
+  # PLAN §7: record exact deployed version to evidence.
+
+- name: Install Cribl Edge as a boot service in EDGE mode (Linux)
+  ansible.builtin.command: >-
+    {{ cribl_home_linux }}/bin/cribl boot-start enable -m edge -u root
+  register: _cribl_edge_bootstart
+  changed_when: "'already' not in (_cribl_edge_bootstart.stdout | default(''))"
+  # -m edge selects Edge (not Stream) mode; boot-start installs the systemd unit.
+  # Standalone: no leader URL is passed, so Edge runs self-managed from local/.

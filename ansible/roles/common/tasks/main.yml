@@ -1,0 +1,12 @@
+# =============================================================================
+# roles/common/tasks/main.yml — base host prep (Linux + Windows)
+# =============================================================================
+# Branches on OS family; every task named (PLAN §7).
+---
+- name: Include Linux base preparation
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
+
+- name: Include Windows base preparation
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"

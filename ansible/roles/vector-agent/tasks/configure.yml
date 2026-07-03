@@ -1,0 +1,29 @@
+# =============================================================================
+# roles/vector-agent/tasks/configure.yml — scenario config + restart
+# =============================================================================
+# Re-templates /etc/vector/vector.yaml for the current scenario and restarts the
+# service. Called at install time AND standalone per-run by configure-scenario.yml
+# (PLAN §7 config-only scenario switching).
+---
+- name: Template Vector agent config (Linux)
+  ansible.builtin.template:
+    src: vector.yaml.j2
+    dest: "{{ vector_config_linux }}"
+    mode: "0644"
+    validate: "/usr/bin/vector validate --config-yaml %s"
+  when: ansible_os_family != "Windows"
+  notify: Restart vector (linux)
+  # validate: refuse to install a config Vector cannot parse — a broken config
+  # mid-matrix would silently drop a run's data.
+
+- name: Template Vector agent config (Windows)
+  ansible.windows.win_template:
+    src: vector.yaml.j2
+    dest: "{{ vector_config_win }}"
+  when: ansible_os_family == "Windows"
+  notify: Restart vector (windows)
+
+- name: Flush handlers so the new scenario config is live before returning
+  ansible.builtin.meta: flush_handlers
+  # configure-scenario.yml expects the service restarted by the time this role
+  # returns, so the orchestrator's subsequent generator start hits the new config.

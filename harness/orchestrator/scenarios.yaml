@@ -1,0 +1,147 @@
+# =============================================================================
+# scenarios.yaml — declarative experiment matrix for the llt hop-latency test.
+#
+# This file is the single declarative definition of the 48-run matrix (PLAN §3):
+#     4 scenarios × 2 forwarding agents × 2 aggregator stacks × 3 volume tiers.
+# The Host-OS dimension (linux + windows) is NOT a matrix axis: both OSes run
+# CONCURRENTLY within every run and are separated at analysis time via host_os
+# (PLAN §3). Each cell therefore names a *pair* of hosts (one Linux, one Windows).
+#
+# run_matrix.py reads this file, expands `matrix` into cells, resolves each cell's
+# parameters from the lookup blocks below, and drives Ansible + SSM per PLAN §8.
+#
+# Run-ID convention (PLAN §3):
+#     s{1-4}-{vec|ce}-{vagg|cs}-{1k|5k|10k}-{YYYYMMDDTHHMMSSZ}
+#       agent:      vec = Vector,      ce  = Cribl Edge
+#       aggregator: vagg = Vector,     cs  = Cribl Stream
+# The cell KEY below (e.g. s2-vec-vagg-5k) is the run-ID prefix; run_matrix.py
+# appends the UTC timestamp at launch.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Global constants — the controlled methodology values (PLAN §3, §4.5, §5.3).
+# These are reported verbatim in REPORT.md and MUST match the Ansible config
+# defaults; run_matrix.py passes them through to configure-scenario.yml.
+# ---------------------------------------------------------------------------
+defaults:
+  warmup_secs: 120           # PLAN §3: 2 min warm-up, excluded from analysis.
+  measurement_secs: 600      # PLAN §3: 10 min measurement window.
+  drain_secs: 120            # Post-stop buffer to let final S3 flush complete
+                             # (dominated by the 5 s batch timeout; 120 s is a
+                             # generous safety margin, overridable per PLAN orch).
+  event_target_bytes: 512    # PLAN §5.1 padded event size.
+
+  # Sink batching — controlled constants (PLAN §4.5). Reported in the results.
+  s3_batch_timeout_secs: 5   # Every →S3 hop (landing + final).
+  s3_batch_max_bytes: 10485760   # 10 MB.
+  http_batch_timeout_secs: 1 # Inter-aggregator HTTP sinks.
+
+  # Wire protocol / ports (PLAN §4.4). Tier-1 = 8080, Tier-2 = 8081, over NLBs,
+  # HTTP/1.1 POST of NDJSON, TLS disabled on internal hops.
+  tier1_port: 8080
+  tier2_port: 8081
+
+# ---------------------------------------------------------------------------
+# Host pairs (PLAN §4.2). Four generator hosts exist; only the pair matching a
+# run's `agent` dimension generates during that run. host_id values follow the
+# tag/naming convention (PLAN §7). Concrete instance IDs are resolved at runtime
+# by run_matrix.py from EC2 tags (Role=generator, Stack, Os) — NOT hardcoded here.
+# ---------------------------------------------------------------------------
+host_pairs:
+  vector:          # Vector agent hosts (agent dimension = vec)
+    linux:   llt-lin-vec-01
+    windows: llt-win-vec-01
+  cribl_edge:      # Cribl Edge hosts (agent dimension = ce)
+    linux:   llt-lin-ce-01
+    windows: llt-win-ce-01
+
+# ---------------------------------------------------------------------------
+# Aggregator stack endpoints (PLAN §4.3). NLB names are the Tier-1 entry NLBs
+# reached via PrivateLink from the sender VPC; Tier-2 NLBs are internal to the
+# logging VPC. run_matrix.py resolves the actual PrivateLink DNS from Terraform
+# outputs / SSM params; these logical names document intent and let Ansible pick
+# the right config template.
+# ---------------------------------------------------------------------------
+aggregators:
+  vagg:            # Vector aggregator stack
+    stack: vector
+    t1_nlb: llt-vagg-t1-nlb
+    t2_nlb: llt-vagg-t2-nlb
+    landing_bucket: llt-landing-vagg        # <acct> suffix appended at runtime
+    landing_sqs: llt-landing-vagg-q
+  cs:              # Cribl Stream stack
+    stack: cribl
+    t1_nlb: llt-cs-t1-nlb
+    t2_nlb: llt-cs-t2-nlb
+    landing_bucket: llt-landing-cs
+    landing_sqs: llt-landing-cs-q
+
+# ---------------------------------------------------------------------------
+# Final destination bucket (PLAN §4.3). Keyed final/{run_id}/{host_os}/...
+# The <acct> suffix (logging account ID) is appended by run_matrix.py.
+# ---------------------------------------------------------------------------
+final_bucket: llt-final
+artifacts_bucket: llt-artifacts    # generator distribution + manifest collection
+
+# ---------------------------------------------------------------------------
+# Scenario topology (PLAN §2). Declares the hop chain per scenario so Ansible
+# knows which config template to render and analyze.py knows which hops to expect.
+#   uses_landing: whether the agent writes to a landing S3 bucket (S3/S4).
+#   agg_tiers:    number of aggregator tiers in the path (1 or 2).
+# ---------------------------------------------------------------------------
+scenarios:
+  s1:
+    description: "Host -> Aggregator -> S3 (final)"
+    uses_landing: false
+    agg_tiers: 1
+    hops: [gen_to_agent, agent_to_agg1, agg_last_to_final]
+  s2:
+    description: "Host -> Aggregator-T1 -> Aggregator-T2 -> S3 (final)"
+    uses_landing: false
+    agg_tiers: 2
+    hops: [gen_to_agent, agent_to_agg1, agg1_to_agg2, agg_last_to_final]
+  s3:
+    description: "Host -> S3 (landing) -> Aggregator -> S3 (final)"
+    uses_landing: true
+    agg_tiers: 1
+    hops: [gen_to_agent, agent_to_landing, landing_to_agg1, agg_last_to_final]
+  s4:
+    description: "Host -> S3 (landing) -> Aggregator-T1 -> Aggregator-T2 -> S3 (final)"
+    uses_landing: true
+    agg_tiers: 2
+    hops: [gen_to_agent, agent_to_landing, landing_to_agg1, agg1_to_agg2, agg_last_to_final]
+
+# ---------------------------------------------------------------------------
+# Volume tiers (PLAN §3). Per generating host EPS. The tier token is part of the
+# run ID (1k/5k/10k).
+# ---------------------------------------------------------------------------
+volumes:
+  "1k":  { eps: 1000 }
+  "5k":  { eps: 5000 }
+  "10k": { eps: 10000 }
+
+# ---------------------------------------------------------------------------
+# Matrix axes. run_matrix.py takes the Cartesian product of these four lists to
+# produce the 48 cells. Each combination maps to:
+#   agent token -> host_pairs[...] and agent config,
+#   aggregator token -> aggregators[...],
+#   scenario token -> scenarios[...],
+#   volume token -> volumes[...].
+# ---------------------------------------------------------------------------
+matrix:
+  scenario:   [s1, s2, s3, s4]
+  agent:      [vec, ce]        # vec = Vector, ce = Cribl Edge
+  aggregator: [vagg, cs]       # vagg = Vector aggregator, cs = Cribl Stream
+  volume:     ["1k", "5k", "10k"]
+
+# ---------------------------------------------------------------------------
+# Token -> logical mappings used during cell expansion. Keeps the run-ID tokens
+# (compact) decoupled from the lookup-block keys (descriptive).
+# ---------------------------------------------------------------------------
+agent_token_map:
+  vec: { host_pair: vector,     stack: vector, config_role: vector-agent }
+  ce:  { host_pair: cribl_edge, stack: cribl,  config_role: cribl-edge }
+
+aggregator_token_map:
+  vagg: { key: vagg }
+  cs:   { key: cs }

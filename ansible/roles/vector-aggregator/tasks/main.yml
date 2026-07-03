@@ -1,0 +1,47 @@
+# =============================================================================
+# roles/vector-aggregator/tasks/main.yml — install pinned Vector + config
+# =============================================================================
+# Aggregators are Linux-only (PLAN §4.3 m6i.xlarge fleet), so no Windows branch.
+---
+- name: Ensure Vector directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ vector_dir_linux }}"
+    - /etc/vector
+
+- name: Download pinned Vector tarball
+  ansible.builtin.get_url:
+    url: "{{ vector_download_base }}/vector-{{ vector_version }}-{{ vector_linux_arch }}.tar.gz"
+    dest: "/tmp/vector-{{ vector_version }}.tar.gz"
+    mode: "0644"
+
+- name: Unpack Vector
+  ansible.builtin.unarchive:
+    src: "/tmp/vector-{{ vector_version }}.tar.gz"
+    dest: "{{ vector_dir_linux }}"
+    remote_src: true
+    extra_opts: [--strip-components=2]
+
+- name: Symlink vector binary onto PATH
+  ansible.builtin.file:
+    src: "{{ vector_dir_linux }}/bin/vector"
+    dest: /usr/bin/vector
+    state: link
+
+- name: Record exact deployed Vector version as evidence
+  ansible.builtin.command: /usr/bin/vector --version
+  register: _vagg_version_out
+  changed_when: false
+
+- name: Install Vector systemd unit
+  ansible.builtin.template:
+    src: vector.service.j2
+    dest: /etc/systemd/system/{{ vector_service_name }}.service
+    mode: "0644"
+  notify: Reload systemd for vagg
+
+- name: Template aggregator config for the current scenario/tier
+  ansible.builtin.include_tasks: configure.yml

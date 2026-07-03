@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# Cribl Edge pipeline — Eval function adds hop_ts.agent (ms epoch).
+# PARITY: field name hop_ts.agent is IDENTICAL to the Vector VRL remap and is
+# LOAD-BEARING for analysis (PLAN §5.1). Cribl _time is seconds; we write ms to
+# match the Vector to_unix_timestamp(..., "milliseconds") output exactly.
+pipelines:
+  stamp_agent:
+    conf:
+      functions:
+        - id: eval
+          filter: "true"
+          conf:
+            add:
+              # Date.now() is JS epoch milliseconds — same unit as Vector's ms.
+              - name: hop_ts.agent
+                value: Date.now()

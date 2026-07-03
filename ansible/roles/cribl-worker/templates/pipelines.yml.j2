@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+# Cribl worker pipeline — Eval adds hop_ts.agg1 (t1) or hop_ts.agg2 (t2).
+# FIELD NAMES are IDENTICAL to the Vector aggregator VRL remap and LOAD-BEARING
+# for analysis (PLAN §5.1). Date.now() = ms epoch, matching Vector's ms unit.
+pipelines:
+{% if cribl_worker_group == 't1' %}
+  stamp_agg:
+    conf:
+      functions:
+        - id: eval
+          filter: "true"
+          conf:
+            add:
+              - name: hop_ts.agg1
+                value: Date.now()
+{% else %}
+  stamp_agg:
+    conf:
+      functions:
+        - id: eval
+          filter: "true"
+          conf:
+            add:
+              - name: hop_ts.agg2
+                value: Date.now()
+{% endif %}
