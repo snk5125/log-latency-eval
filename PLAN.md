@@ -160,6 +160,24 @@ Anything tuned beyond this list must be added here first; anything on this
 list that cannot be implemented in a tool must be recorded in the report as
 an asymmetry.
 
+**Tuning reference table (required deliverable).** Every tuning action above
+is enumerated in a reference table maintained in `docs/TUNING.md` (source of
+truth) and mirrored in `report/REPORT.md` (Methodology → Tuning Profile),
+with one row per setting per stack:
+
+| Column | Content |
+|--------|---------|
+| Component | e.g. Vector agent, Cribl Edge, Cribl worker t1, NLB |
+| Setting | exact config key as it appears in the deployed config |
+| Default | the tool/service default being overridden |
+| Tuned value | value set by the Ansible role (file + line reference) |
+| Why | latency rationale, one sentence |
+| Performance gain | measured effect where A/B run evidence exists; otherwise the vendor-documented expectation with citation, prefixed [Unverified] until validated by run data |
+
+The "Performance gain" column starts as expectation-with-citation at build
+time and is populated with measured values during the analysis phase (§8
+phase 4). No unmeasured gain may be stated as fact.
+
 ## 5. Latency Measurement Methodology
 
 ### 5.1 Event schema (NDJSON, ~512 bytes padded)
