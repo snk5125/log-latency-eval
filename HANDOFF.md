@@ -38,18 +38,36 @@ incurred. No results exist yet — REPORT.md findings are all [PENDING].**
   `bash -n` ×4; 76 template renders; batch constants 5s/10MB/1s + ports
   8080/8081 + `hop_ts.*` confirmed unchanged by the tuning pass.
 
+**Cribl licensing redesign (session 2, RESOLVED + committed):** the user
+confirmed Cribl Free supports only a **single worker group per leader** — the
+original leader + 2-worker-group design was invalid. The Cribl stack was
+rebuilt as **4 independent single-instance standalone Cribl Stream nodes, no
+leader** (2 behind `llt-cs-t1-nlb`, 2 behind `llt-cs-t2-nlb`), each locally
+file-configured by the new `cribl-stream` role (the `cribl-leader` +
+`cribl-worker` roles were deleted). PLAN §4.3/§4.6.5/§5A rewritten to match.
+Instance count **13 → 12**. This removed the leader REST commit/deploy,
+`users.json` seeding, and distributed-licensing TODOs entirely. Verified:
+terraform validate, ansible syntax ×3, 40 cribl-stream renders, 48-cell
+dry-run, ports/batch/`hop_ts` unchanged, `cribl-stream` var seam
+(generated_infra + defaults) consistent, topology SVG re-rendered without the
+leader.
+
 **⚠ DEPLOY-TIME TODOs (verify before first apply — could not be validated
 offline):**
-1. **Cribl Free license + distributed mode.** The leader + 2-worker-group
-   design assumes Free/self-hosted supports distributed mode; NOT confirmed
-   against current Cribl terms. PLAN §4.3 already flags "verify at deploy time."
-   If Free forbids it, the Cribl stack needs a single-instance rethink.
-2. **4 Cribl 4.13 config keys are best-guess** (marked TODO in-config +
+1. **Standalone Cribl Stream smoke-test** (low risk, but unverified against a
+   live node this session): (a) a tarball-installed Cribl node runs in Stream
+   mode by default — the role deliberately issues NO `mode-*` command; confirm
+   on first converge. (b) node-level worker count is set via
+   `$CRIBL_HOME/local/cribl/cribl.yml` `workers.count` (documented key);
+   confirm it takes effect. (c) local config under `$CRIBL_HOME/local/cribl/`
+   is read without a leader/commit.
+2. **3 Cribl 4.13 config keys still best-guess** (marked TODO in-config +
    `docs/TUNING.md` §6): File Monitor `servicePeriodSecs`, Webhook `concurrency`,
-   S3 source `pollTimeoutSecs`, `workerProcesses`. Confirm against a live 4.13
-   schema; wrong keys are ignored/error at converge (deploy is gated anyway).
-3. **M3/M12 in-config TODOs:** exact Cribl Edge Windows MSI URL, and the
-   `users.json` bcrypt admin-password seeding scheme for 4.13.
+   S3 source `pollTimeoutSecs`. (`workerProcesses` is superseded by the
+   documented `cribl.yml workers.count` above.) Wrong keys are ignored/error at
+   converge; deploy is gated anyway.
+3. **Cribl Edge Windows MSI URL** — exact 4.13 download URL is a TODO in the
+   `cribl-edge` role (the agent side, unaffected by the standalone redesign).
 
 ---
 

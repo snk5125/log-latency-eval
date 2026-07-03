@@ -4,10 +4,10 @@
 #
 # WHY THIS EXISTS
 #   The Ansible roles are written against deploy-time infrastructure facts
-#   (bucket names, NLB / PrivateLink endpoint DNS, SQS URLs, Cribl leader IP)
-#   that only exist after `terraform apply`. Rather than hand-editing role
-#   defaults, this script renders a single generated group_vars file that the
-#   dynamic inventory picks up automatically:
+#   (bucket names, NLB / PrivateLink endpoint DNS, SQS URLs) that only exist
+#   after `terraform apply`. Rather than hand-editing role defaults, this
+#   script renders a single generated group_vars file that the dynamic
+#   inventory picks up automatically:
 #
 #       ansible/inventories/group_vars/all/generated_infra.yml   (GITIGNORED)
 #
@@ -83,7 +83,6 @@ cribl_edge_landing_bucket="$(tfo landing_cs_bucket)"
 cribl_agg_t2_nlb="$(tfo cribl_t2_nlb_dns)"
 cribl_final_bucket="$(tfo final_bucket)"
 cribl_landing_sqs_url="$(tfo landing_cs_queue_url)"
-cribl_leader_host="$(tfo cribl_leader_private_ip)"
 
 # --- Render the group_vars file from the already-resolved variables ---------
 # Every var below is consumed by the Ansible layer:
@@ -115,7 +114,6 @@ cribl_edge_landing_bucket: "$cribl_edge_landing_bucket"
 cribl_agg_t2_nlb: "$cribl_agg_t2_nlb"
 cribl_final_bucket: "$cribl_final_bucket"
 cribl_landing_sqs_url: "$cribl_landing_sqs_url"
-cribl_leader_private_ip: "$cribl_leader_host"
 EOF
 
 echo "Wrote $OUT_FILE"

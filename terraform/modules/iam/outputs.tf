@@ -13,7 +13,7 @@ output "generator_host_role_arns" {
 }
 
 output "aggregator_instance_profile_name" {
-  description = "Instance-profile name shared by Vector aggregators and Cribl workers/leader."
+  description = "Instance-profile name shared by Vector aggregators and the standalone Cribl Stream nodes."
   value       = aws_iam_instance_profile.aggregator.name
 }
 

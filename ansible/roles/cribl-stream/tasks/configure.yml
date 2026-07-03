@@ -1,0 +1,70 @@
+# =============================================================================
+# roles/cribl-stream/tasks/configure.yml — scenario/tier config as files + restart
+# =============================================================================
+# Delivers standalone config files under $CRIBL_HOME/local/cribl/ — the same
+# file-based config model cribl-edge already uses — and restarts Cribl. Called
+# at install (tasks/main.yml) AND standalone per-run by configure-scenario.yml.
+# The templates branch on llt_role (agg_t1 vs agg_t2, from the Role tag —
+# same mechanism vector-aggregator uses) and scenario. NO leader, NO
+# commit/deploy REST calls: this node's local/cribl/ tree IS the running
+# config, so templating + a restart is the entire "deploy" step.
+#
+# File layout (verified against cribl-edge's standalone layout, C4 shape):
+# inputs.yml and outputs.yml are direct children of local/cribl/; routes and
+# pipeline confs live one level deeper, under pipelines/ — the pipeline id
+# ("stamp_agg") gets its own subdirectory holding conf.yml.
+---
+- name: Ensure inputs/outputs/pipelines dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ cribl_local }}"
+    - "{{ cribl_local }}/pipelines"
+    - "{{ cribl_local }}/pipelines/stamp_agg"
+
+- name: Template inputs.yml (HTTP Raw source, + S3-via-SQS source in S3/S4)
+  ansible.builtin.template:
+    src: inputs.yml.j2
+    dest: "{{ cribl_local }}/inputs.yml"
+    mode: "0644"
+  notify: Restart cribl stream
+
+- name: Template outputs.yml (S3 dest + Webhook t1->t2)
+  ansible.builtin.template:
+    src: outputs.yml.j2
+    dest: "{{ cribl_local }}/outputs.yml"
+    mode: "0644"
+  notify: Restart cribl stream
+
+- name: Template stamp_agg pipeline conf (Eval adds hop_ts.agg1/agg2)
+  ansible.builtin.template:
+    src: pipeline_conf.yml.j2
+    dest: "{{ cribl_local }}/pipelines/stamp_agg/conf.yml"
+    mode: "0644"
+  notify: Restart cribl stream
+
+- name: Template route.yml (source->pipeline->dest)
+  ansible.builtin.template:
+    src: route.yml.j2
+    dest: "{{ cribl_local }}/pipelines/route.yml"
+    mode: "0644"
+  notify: Restart cribl stream
+
+- name: Template node-level cribl.yml (worker-process count, TUNING §4.6 item 5)
+  ansible.builtin.template:
+    src: cribl.yml.j2
+    dest: "{{ cribl_local }}/cribl.yml"
+    mode: "0644"
+  notify: Restart cribl stream
+  # Standalone node has no leader/group to push a per-group override to (the
+  # deleted cribl-leader role's groups.yml `workerProcesses` key doesn't
+  # apply here — that mechanism no longer exists). The node-level
+  # $CRIBL_HOME/local/cribl/cribl.yml `workers: count:` key IS documented
+  # precisely (docs.cribl.io/stream/criblyml/: "default: 1; if less than 1
+  # the value is added to CPU count") and applies directly to a standalone
+  # node, so this is the correct (and now only) place to set it.
+
+- name: Flush handlers so new scenario config is live before returning
+  ansible.builtin.meta: flush_handlers

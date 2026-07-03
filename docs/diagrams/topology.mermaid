@@ -49,15 +49,12 @@ flowchart TB
         VT2NLB --> VT2
       end
 
-      subgraph CSTACK["Cribl Stream stack"]
+      subgraph CSTACK["Cribl Stream stack — 4 standalone nodes, NO leader (Free: 1 worker group/leader max)"]
         direction TB
-        Leader["Leader: 1 × m6i.large\nllt-cs-leader\n(control plane :4200 join / :9000 API\nNOT on data path)"]
         CT1NLB["Internal NLB\nllt-cs-t1-nlb :8080\ncross-zone ON"]
-        CT1["Worker group t1: 2 × m6i.xlarge\n(llt-cs-t1-0/1)"]
+        CT1["Tier-1: 2 × m6i.xlarge standalone\n(llt-cs-t1-0/1)\neach file-configured locally"]
         CT2NLB["Internal NLB\nllt-cs-t2-nlb :8081\ncross-zone ON"]
-        CT2["Worker group t2: 2 × m6i.xlarge\n(llt-cs-t2-0/1)"]
-        Leader -.control plane :4200/:9000.- CT1
-        Leader -.control plane :4200/:9000.- CT2
+        CT2["Tier-2: 2 × m6i.xlarge standalone\n(llt-cs-t2-0/1)\neach file-configured locally"]
         CT1NLB --> CT1
         CT1 -->|"HTTP POST NDJSON\n:8081, 1s batch"| CT2NLB
         CT2NLB --> CT2
@@ -115,7 +112,7 @@ flowchart TB
 
   class SENDER,LOGGING account;
   class SVPC,LVPC vpc;
-  class LinVec,WinVec,LinCe,WinCe,Leader host;
+  class LinVec,WinVec,LinCe,WinCe host;
   class SSMEP,S3GWSender,VaggEP,CsEP,VectorSvc,CriblSvc,S3GWLogging endpoint;
   class VT1NLB,VT2NLB,CT1NLB,CT2NLB nlb;
   class VT1,VT2,CT1,CT2 compute;

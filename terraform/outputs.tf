@@ -100,14 +100,3 @@ output "generator_instance_ids" {
   description = "Map of generator host logical name -> instance ID (used by the SSM-driven orchestrator to start/stop generators per run)."
   value       = module.generator_hosts.instance_ids
 }
-
-# --- Cribl leader (UI reachable via SSM port-forward only) ---
-output "cribl_leader_instance_id" {
-  description = "Cribl Stream leader instance ID (UI on :9000 reachable only via SSM port-forward, no ingress)."
-  value       = module.cribl_stream.leader_instance_id
-}
-
-output "cribl_leader_private_ip" {
-  description = "Cribl Stream leader private IP — bridged into Ansible as cribl_leader_private_ip (workers join on :4200) by scripts/gen-ansible-vars.sh."
-  value       = module.cribl_stream.leader_private_ip
-}

@@ -3,7 +3,7 @@
 # Vector AGGREGATOR config — llt latency experiment
 # tier: {{ llt_role }}  |  scenario: {{ scenario }}  |  host: {{ inventory_hostname }}
 # =============================================================================
-# PARITY CONTRACT (must match cribl-worker role exactly):
+# PARITY CONTRACT (must match cribl-stream role exactly):
 #   Tier-1 sources: http :8080 (S1/S2/S3/S4) + aws_s3 via SQS (S3/S4 only)
 #   Tier-1 remap  : add hop_ts.agg1 (ms epoch)
 #   Tier-1 sink   : S1/S3 -> final S3 (5s/10MB, key final/{run_id}/{host_os}/)

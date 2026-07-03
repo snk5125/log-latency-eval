@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# Cribl Stream standalone node route — tier {{ llt_role }}, scenario {{ scenario }}.
+# Rendered directly to this node's own $CRIBL_HOME/local/cribl/pipelines/
+# route.yml — see inputs.yml.j2 note (no leader, no commit/deploy).
+# Wire all sources through stamp_agg to the scenario destination (mirrors the
+# Vector aggregator input->transform->sink wiring).
+#
+# SHAPE: top-level `routes:` is a LIST (not a dict wrapping a second `routes:`
+# key) — each entry is {id, name, filter, pipeline, output, final}.
+routes:
+  - id: llt_main
+    name: llt_main
+    filter: "true"
+    pipeline: stamp_agg
+{% if llt_role == 'agg_t1' and scenario in ['s2', 's4'] %}
+    output: to_t2
+{% else %}
+    output: final_s3
+{% endif %}
+    final: true

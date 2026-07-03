@@ -1,0 +1,100 @@
+# =============================================================================
+# roles/cribl-stream/defaults/main.yml
+# =============================================================================
+# WHY: Cribl Free supports at most a single worker group per leader — not
+# enough for the two physically-separate tiers this experiment measures
+# (PLAN §4.3). Each Cribl Stream aggregator node is therefore an INDEPENDENT,
+# SINGLE-INSTANCE, STANDALONE Cribl Stream deployment with NO leader and NO
+# worker groups: self-configured locally by Ansible, exactly the file-based
+# config model the cribl-edge role already uses for the standalone Cribl Edge
+# agent. This role is the parity counterpart to vector-aggregator — same
+# HTTP Raw source ports (8080/8081), same S3-via-SQS source in S3/S4, same
+# Eval-added hop_ts.agg1/agg2, same S3 destination batch constants (5 s/10 MB),
+# same inter-tier Webhook batch constant (1 s) — PLAN §4.4/§4.5 parity
+# contract. There is no leader, no worker-group join, no distributed port, no
+# auth token, no REST commit/deploy: each node's local/cribl/ config IS the
+# running config, the same as cribl-edge.
+#
+# TIER SELECTION: a node's tier comes from its Role tag (agg-t1 / agg-t2),
+# exposed as llt_role (role_agg_t1 / role_agg_t2 inventory groups) — the same
+# mechanism vector-aggregator uses. Templates branch on it.
+---
+# --- PINNED Cribl version ----------------------------------------------------
+# SAME as cribl-edge for a single Cribl build across the whole stack (parity +
+# evidence, PLAN §7).
+cribl_version: "4.13.0"
+cribl_download_linux: "https://cdn.cribl.io/dl/{{ cribl_version }}/cribl-{{ cribl_version }}-linux-x64.tgz"
+
+# CRIBL_HOME install root. Aggregator fleet is Linux-only (PLAN §4.3
+# m6i.xlarge), so no Windows path here (mirrors vector-aggregator).
+cribl_home: /opt/cribl
+cribl_service_name: cribl
+
+# Config lives under $CRIBL_HOME/local/cribl/ (standalone file-based config —
+# identical path convention to cribl-edge's cribl_edge_local_linux).
+cribl_local: /opt/cribl/local/cribl
+
+# --- Ports (PLAN §4.4) — identical to vector-aggregator's t1/t2 ports --------
+cribl_t1_http_port: 8080          # t1 HTTP Raw source listens :8080
+cribl_t2_http_port: 8081          # t2 HTTP Raw source listens :8081
+
+# --- Scenario + run wiring (injected per run) -------------------------------
+scenario: "s1"
+run_id: ""
+cribl_aws_region: "{{ llt_aws_region | default('us-east-2') }}"
+
+# Tier-2 NLB DNS — where a t1 node forwards in S2/S4 (PLAN §4.3 llt-cs-t2-nlb).
+cribl_agg_t2_nlb: "llt-cs-t2-nlb.internal.invalid"
+
+# Final destination bucket (logging account, PLAN §4.3 llt-final-<acct>).
+cribl_final_bucket: "llt-final-REPLACE"
+
+# S3 source (S3/S4 only): SQS queue fed by landing-bucket event notifications
+# (PLAN §4.3). Event-driven pickup, not poll-interval. Enabled only in S3/S4.
+cribl_landing_sqs_url: "https://sqs.us-east-2.amazonaws.com/REPLACE/llt-landing-cs-q"
+
+# --- Batch constants — CONTROLLED CONSTANT (PLAN §4.5), identical to Vector -
+cribl_s3_flush_secs: 5              # ->S3: 5 s  (== Vector timeout_secs)
+cribl_s3_max_bytes_mb: 10           # 10 MB      (== Vector max_bytes)
+cribl_http_flush_secs: 1            # inter-tier HTTP: 1 s (== Vector http batch)
+
+# --- Low-latency tuning profile (PLAN §4.6) — see docs/TUNING.md -----------
+# Items 6-8: RECORD ONLY — see the full citations in
+# ansible/roles/vector-agent/defaults/main.yml ("Items 6-8" block). Item 6's
+# NLB cross-zone/deregistration-delay terraform citations for THIS stack:
+# terraform/modules/cribl-stream/main.tf:180 (t1
+# enable_cross_zone_load_balancing) / :207 (t1 deregistration_delay) and
+# :241 (t2 enable_cross_zone_load_balancing) / :264 (t2 deregistration_delay)
+# — identical values to the vector-aggregator module (parity). No
+# cribl-stream role config change for items 6-8.
+#
+# Item 2: t1->t2 Webhook destination request concurrency + compression.
+# Same values/rationale as cribl-edge's cribl_edge_concurrency (parity
+# counterpart to Vector's adaptive concurrency on the T1->T2 hop). Cribl
+# Webhook default concurrency is 5 (range 1-32); compression defaults ON
+# (must be explicitly disabled for parity with Vector's compression-off
+# default). Vendor doc: docs.cribl.io/stream/destinations-webhook/.
+cribl_t2_webhook_concurrency: 32
+
+# Item 4: S3 source SQS long-poll wait. Cribl's S3 source "Poll timeout
+# (secs)" — min 1 / default 10 / MAX 20 (docs.cribl.io/stream/sources-s3/).
+# Floored... i.e. RAISED to the ceiling (20 is the "as long as possible"
+# setting, matching AWS SQS's own hard max for WaitTimeSeconds) per PLAN
+# §4.6.4's literal `WaitTimeSeconds=20`.
+cribl_s3_poll_timeout_secs: 20
+
+# Item 5: worker PROCESS count (node-local Cribl worker processes — NOT to be
+# confused with the deleted "worker group" distributed-mode concept; a
+# standalone Cribl Stream node still forks internal worker processes to use
+# multiple cores). m6i.xlarge = 4 vCPU (PLAN §4.3). Set to vCPU count so every
+# core runs a worker process, maximizing parallelism, matching PLAN §4.6.5's
+# "Cribl worker processes set to vCPU count." Cribl's own documented DEFAULT
+# for this setting is -2 (vCPU-count-minus-2) via the Group Settings UI
+# prose, vs. a documented default of 1 via the node-level cribl.yml
+# `workers.count` schema comment ("if less than 1, the value is added to CPU
+# count") — the two figures are NOT reconciled in Cribl's own docs across the
+# pages checked; recorded as a discrepancy in docs/TUNING.md rather than
+# silently picking one. On a STANDALONE node (no leader/group), this setting
+# is a NODE-level config (cribl.yml `workers: count:`), not a leader-pushed
+# per-group override — see tasks/main.yml for where it is applied.
+cribl_worker_processes: 4

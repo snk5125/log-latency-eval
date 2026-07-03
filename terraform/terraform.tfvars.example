@@ -31,7 +31,6 @@ enable_logging_nat = true
 #     smoke-test cheaply — document any override as a deviation in results) ---
 # generator_instance_type    = "m6i.large"
 # aggregator_instance_type   = "m6i.xlarge"
-# cribl_leader_instance_type = "m6i.large"
 
 # --- Data lifecycle (PLAN §4.3: 7-day expiry) ---
 # landing_final_expiration_days = 7

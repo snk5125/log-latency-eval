@@ -1,9 +1,10 @@
 # =============================================================================
 # inventories/logging.aws_ec2.yml — dynamic EC2 inventory, LOGGING account (llt)
 # =============================================================================
-# Discovers the logging-account hosts (Vector aggregators tier-1/tier-2, Cribl
-# leader, Cribl workers) by tag (PLAN §7). Paired with sender.aws_ec2.yml; both
-# are loaded because ansible.cfg sets inventory=inventories/ (the directory).
+# Discovers the logging-account hosts (Vector aggregators tier-1/tier-2,
+# standalone Cribl Stream nodes tier-1/tier-2 — no leader, PLAN §4.3) by tag
+# (PLAN §7). Paired with sender.aws_ec2.yml; both are loaded because
+# ansible.cfg sets inventory=inventories/ (the directory).
 # aws_profile is type:str, so ONE profile per file (LOGGING here).
 #
 # Env vars (exported by scripts/setup.sh; no secrets in repo, PLAN §7):
@@ -28,7 +29,7 @@ hostnames:
   - instance-id
 
 # IDENTICAL keyed_groups to the sender file so the unioned group namespace is
-# consistent: role_agg_t1, role_agg_t2, role_leader, stack_vector/cribl, os_*.
+# consistent: role_agg_t1, role_agg_t2, stack_vector/cribl, os_*.
 keyed_groups:
   - key: tags.Role | lower | replace('-', '_')
     prefix: role
@@ -50,9 +51,9 @@ compose:
   llt_private_ip: private_ip_address
   llt_instance_id: instance_id
   # Per-host SSM profile: hosts discovered by THIS file live in the LOGGING
-  # account (aggregators, Cribl leader), so the aws_ssm connection must use
-  # the logging profile. Overrides the group_vars default so one play can
-  # span both accounts with correct credentials.
+  # account (Vector + Cribl Stream aggregators), so the aws_ssm connection
+  # must use the logging profile. Overrides the group_vars default so one
+  # play can span both accounts with correct credentials.
   llt_ssm_profile: lookup('ansible.builtin.env', 'LLT_AWS_PROFILE_LOGGING') | default('llt-logging', true)
 
 strict: false

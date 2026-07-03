@@ -32,11 +32,15 @@ end-to-end. See [`PLAN.md`](PLAN.md) §1 for the authoritative statement.
 
 Two AWS accounts in a single region (`us-east-2` default). The **sender account**
 holds the generator hosts and their forwarding agents; the **logging account**
-holds the aggregator tiers, the Cribl leader, and the S3 buckets. Cross-account
-agent→aggregator traffic traverses **PrivateLink** (interface endpoints → VPC
-endpoint services → internal NLBs). S3/S4 landing traffic and final delivery go
-to logging-account S3 buckets; landing objects trigger **S3 event notifications →
-SQS**, which the aggregators' S3 sources consume for event-driven pickup.
+holds the aggregator tiers and the S3 buckets. The Cribl Stream stack has **no
+leader** — the Cribl Free license supports only a single worker group per
+leader, so the two measured tiers are deployed as four independent
+single-instance standalone Cribl Stream nodes instead (`PLAN.md` §4.3).
+Cross-account agent→aggregator traffic traverses **PrivateLink** (interface
+endpoints → VPC endpoint services → internal NLBs). S3/S4 landing traffic and
+final delivery go to logging-account S3 buckets; landing objects trigger **S3
+event notifications → SQS**, which the aggregators' S3 sources consume for
+event-driven pickup.
 
 ```
  SENDER ACCOUNT  (VPC llt-sender-vpc 10.10.0.0/16, private subnets only)
@@ -61,14 +65,17 @@ SQS**, which the aggregators' S3 sources consume for event-driven pickup.
  │        │                                                                │
  │   ┌────▼───────────────┐          ┌─────────────────────┐               │
  │   │ Vector agg stack   │          │ Cribl Stream stack  │               │
- │   │  T1 NLB :8080      │          │  leader (m6i.large)  │               │
- │   │  2× m6i.xlarge     │          │  T1 NLB :8080        │               │
- │   │       │ (T2 NLB,   │          │  2× worker m6i.xlarge│               │
- │   │       ▼  internal) │          │       │ (T2 NLB,     │               │
- │   │  T2 NLB :8081      │          │       ▼  internal)   │               │
- │   │  2× m6i.xlarge     │          │  T2 NLB :8081        │               │
- │   └────┬───────────────┘          │  2× worker m6i.xlarge│               │
- │        │                          └────┬─────────────────┘               │
+ │   │  T1 NLB :8080      │          │  (standalone nodes,  │               │
+ │   │  2× m6i.xlarge     │          │   NO leader)          │               │
+ │   │       │ (T2 NLB,   │          │  T1 NLB :8080        │               │
+ │   │       ▼  internal) │          │  2× standalone       │               │
+ │   │  T2 NLB :8081      │          │  m6i.xlarge          │               │
+ │   │  2× m6i.xlarge     │          │       │ (T2 NLB,     │               │
+ │   │                    │          │       ▼  internal)   │               │
+ │   │                    │          │  T2 NLB :8081        │               │
+ │   │                    │          │  2× standalone       │               │
+ │   │                    │          │  m6i.xlarge          │               │
+ │   └────┬───────────────┘          └────┬─────────────────┘               │
  │        │  final S3 PutObject           │                                 │
  │        ▼                               ▼                                 │
  │   ┌──────────────────────────────────────────────────────────┐          │
@@ -103,7 +110,7 @@ the per-hop measurement derivation live in
 - **AWS CLI v2** configured with both profiles; **Session Manager plugin**.
 - **Python** ≥ 3.11 for the harness (`boto3`; generator runs on Linux and
   Windows Python).
-- Sufficient account quotas for 13 EC2 instances plus 4 internal NLBs, VPC
+- Sufficient account quotas for 12 EC2 instances plus 4 internal NLBs, VPC
   endpoints, and 2 VPC endpoint services across two accounts.
 
 ### Cost warning (ESTIMATE — verify against current AWS pricing)
@@ -113,23 +120,24 @@ the per-hop measurement derivation live in
 > and are **not a quote.** Verify every line against current AWS pricing for
 > your region before deploying, and always run `scripts/teardown.sh` when done.
 
-Instance inventory from `PLAN.md` §4 (13 EC2 instances):
+Instance inventory from `PLAN.md` §4 (12 EC2 instances; the Cribl Stream stack
+has **no leader** — it runs as 4 independent single-instance standalone nodes,
+`PLAN.md` §4.3):
 
 | Count | Type | Role | Account |
 |------:|------|------|---------|
 | 4 | `m6i.large` | Generator hosts (2 Linux, 2 Windows) | sender |
 | 4 | `m6i.xlarge` | Vector aggregator T1+T2 | logging |
-| 1 | `m6i.large` | Cribl Stream leader | logging |
-| 4 | `m6i.xlarge` | Cribl Stream workers T1+T2 | logging |
+| 4 | `m6i.xlarge` | Cribl Stream nodes T1+T2 (standalone) | logging |
 
 [Unverified] Using representative on-demand `us-east-2` Linux rates in the
 neighborhood of ~$0.096/hr (`m6i.large`) and ~$0.192/hr (`m6i.xlarge`), the EC2
 compute alone is roughly:
 
-- `m6i.large` × 5 ≈ **~$0.48/hr** (Windows instances carry an additional
+- `m6i.large` × 4 ≈ **~$0.38/hr** (Windows instances carry an additional
   per-hour OS license fee not included here)
 - `m6i.xlarge` × 8 ≈ **~$1.54/hr**
-- **EC2 compute subtotal ≈ ~$2.0/hr** *(estimate; Linux-rate basis)*
+- **EC2 compute subtotal ≈ ~$1.9/hr** *(estimate; Linux-rate basis)*
 
 [Unverified] **Not included in that subtotal** and materially additive: Windows
 Server per-hour licensing on the 2 Windows generators, 4 internal Network Load

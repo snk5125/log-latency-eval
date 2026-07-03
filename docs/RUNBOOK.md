@@ -123,7 +123,8 @@ aws ssm send-command --profile <sender|logging> \
 # enabled in the aggregator role — the experiment keeps the box to the measured
 # data path only. Use systemctl + journalctl for health, not `vector top`.
 
-# Cribl worker status (Linux)
+# Cribl standalone node status (Linux) — each node is independent (no leader);
+# target by Role tag (agg-t1 / agg-t2) to check a specific tier.
 aws ssm send-command --profile logging \
   --document-name "AWS-RunShellScript" \
   --targets "Key=tag:Stack,Values=cribl" "Key=tag:Role,Values=agg-t1" \
@@ -134,6 +135,18 @@ aws ssm send-command --profile sender \
   --document-name "AWS-RunPowerShellScript" \
   --targets "Key=tag:Os,Values=windows" \
   --parameters 'commands=["Get-Service vector,cribl* | Format-Table -Auto"]'
+```
+
+If deeper inspection is needed, any Cribl standalone node's own UI (`:9000`)
+is reachable via an SSM port-forward session — there is no leader UI, each
+node serves its own:
+
+```bash
+aws ssm start-session --profile logging \
+  --target <instance-id> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["9000"],"localPortNumber":["9000"]}'
+# then browse http://localhost:9000 for that specific node
 ```
 
 ### 4.2 NLB target health
@@ -185,7 +198,7 @@ Findings from the analyzer output and cite the manifests per §8 Evidence Index.
 | Symptom | Likely cause | Action |
 |---------|--------------|--------|
 | SSM target not found / command stuck | **SSM agent not registered** (endpoints missing, IAM instance profile lacks `AmazonSSMManagedInstanceCore`, or agent not started) | Confirm the three interface endpoints (`ssm`, `ssmmessages`, `ec2messages`) exist and the instance profile is attached; restart `amazon-ssm-agent` (Linux) / `AmazonSSMAgent` service (Windows). |
-| Cribl workers show no data / not in worker group | **Cribl worker not joining leader** (leader unreachable, bad auth token, wrong group tag) | Check worker→leader connectivity and the join config; verify auth artifact (gitignored) is present; confirm `Role`/`Stack` tags map the worker to the correct group. |
+| Cribl standalone node shows no data | **Node-local config not applied or service down** (each node is independently file-configured by Ansible — there is no leader/join step to fail) | Re-run the `cribl-stream` role against the affected node; check `systemctl is-active cribl` / `/opt/cribl/bin/cribl status` on that node; confirm `Role`/`Stack` tags map it to the correct tier (`agg-t1`/`agg-t2`) so the right NLB target group and config were applied. |
 | Windows host emits late / service flaps | **Windows service quirks** (service start ordering, w32time not converged, PowerShell execution policy) | Verify the agent service is `Running` and set to auto-start; re-run `assert-clocks.yml`; allow the 64 s w32time poll floor to settle before measuring. |
 | S3/S4 landing→aggregator latency climbing; loss rising | **SQS backlog** — aggregator S3 source not keeping up | Check SQS depth (§4.3); confirm event notifications are configured on the landing bucket; verify the S3 source consumer is running; if sustained, lower EPS tier or add worker headroom (note as constraint). |
 | →S3 hops all ~5 s regardless of scenario | Expected: **batch-flush dominance** (`PLAN.md` §4.5) | Not a failure. Report S3 deltas raw **and** batch-adjusted (§5.4 item 1). |

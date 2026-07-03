@@ -4,7 +4,7 @@
 # WHY: Vector aggregator nodes form the tier-1/tier-2 hops (PLAN §4.3). Each tier
 # stamps its own hop_ts (agg1 on tier-1, agg2 on tier-2), and the sink depends on
 # scenario (PLAN §2): terminal tiers write final S3; middle tiers forward HTTP to
-# the next tier. This role is the parity counterpart to cribl-worker.
+# the next tier. This role is the parity counterpart to cribl-stream.
 #
 # TIER SELECTION: a host's tier comes from its Role tag (agg-t1 / agg-t2), exposed
 # as llt_role (role_agg_t1 / role_agg_t2 groups). The template branches on it.

@@ -144,7 +144,7 @@ resource "aws_iam_instance_profile" "generator_host" {
 }
 
 # ===========================================================================
-# AGGREGATOR ROLE (LOGGING account) — Vector aggregators + Cribl workers/leader
+# AGGREGATOR ROLE (LOGGING account) — Vector aggregators + standalone Cribl Stream nodes
 # ===========================================================================
 
 data "aws_iam_policy_document" "aggregator_assume" {

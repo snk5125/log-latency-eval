@@ -3,7 +3,7 @@
 #
 # ROLE IN THE EXPERIMENT:
 #   The LOGGING account network (PLAN §4.3). Home to the Vector aggregator
-#   tiers, the Cribl Stream leader + worker groups, their internal NLBs, and the
+#   tiers, the standalone Cribl Stream nodes, their internal NLBs, and the
 #   S3 gateway endpoint. Private-subnet-only on the data path; SSM-only
 #   management (no SSH ingress). The Tier-1↔Tier-2 hop (S2/S4) stays entirely
 #   inside this VPC (via the Tier-2 NLBs), so this network isolates the
@@ -195,14 +195,14 @@ resource "aws_vpc_endpoint" "ssm" {
 }
 
 # ---------------------------------------------------------------------------
-# Aggregator security group (shared by Vector aggregators + Cribl workers/leader).
+# Aggregator security group (shared by Vector aggregators + standalone Cribl nodes).
 # WHY these specific ingress rules:
 #   - 8080 (Tier-1) and 8081 (Tier-2) from within the VPC: the NLBs forward
 #     agent/inter-aggregator HTTP POSTs to the instances; NLBs preserve source
 #     IP, and cross-account PrivateLink traffic arrives from the endpoint ENIs
 #     inside this VPC, so VPC-CIDR scoping covers both in-VPC and PrivateLink.
-#   - 4200 (Cribl worker→leader) and 9000 (Cribl UI) rules are added in the
-#     cribl-stream module on a dedicated leader SG; this shared SG stays generic.
+#   - Standalone Cribl Stream nodes need no control-plane ports (no leader,
+#     no worker→leader channel); this shared SG covers their 8080/8081 ingress.
 #   No SSH ingress (SSM-only). Egress open for S3/SSM/inter-tier POSTs.
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "aggregator" {

@@ -142,28 +142,16 @@
       when: llt_stack == 'vector'
 
 # -----------------------------------------------------------------------------
-# PLAY 5: Cribl Stream LEADER (logging account, single node).
-# Must run before workers so workers have a leader to join.
+# PLAY 5: Cribl Stream on Cribl-stack tier-1 + tier-2 nodes (Linux). PLAN §4.3:
+# Cribl Free supports only a single worker group per leader, so the two tiers
+# are deployed as INDEPENDENT SINGLE-INSTANCE STANDALONE Cribl Stream nodes —
+# no leader, no worker groups. Each node is self-configured locally by
+# Ansible (role cribl-stream), the same file-config model role cribl-edge
+# already uses. role_agg_t1 / role_agg_t2 come from the Role tag, same as
+# PLAY 4 above. These live in the LOGGING account, so llt_ssm_profile must
+# resolve to the logging profile for this play.
 # -----------------------------------------------------------------------------
-- name: Configure Cribl Stream leader
-  hosts: role_leader
-  gather_facts: true
-  # Leader host is Linux-only (PLAN §4.3) — plain become (C1).
-  become: true
-  vars:
-    ansible_connection: aws_ssm
-    ansible_shell_type: sh
-    ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
-    ansible_aws_ssm_region: "{{ llt_aws_region }}"
-    ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
-  roles:
-    - role: cribl-leader
-      when: llt_stack == 'cribl'
-
-# -----------------------------------------------------------------------------
-# PLAY 6: Cribl Stream WORKERS (worker groups t1/t2). Join the leader.
-# -----------------------------------------------------------------------------
-- name: Configure Cribl Stream workers (groups t1/t2)
+- name: Configure Cribl Stream standalone nodes (tier-1 and tier-2)
   hosts: role_agg_t1:role_agg_t2
   gather_facts: true
   # Aggregator fleet is Linux-only (PLAN §4.3) — plain become (C1).
@@ -175,5 +163,5 @@
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
   roles:
-    - role: cribl-worker
+    - role: cribl-stream
       when: llt_stack == 'cribl'

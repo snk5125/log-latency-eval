@@ -150,9 +150,12 @@ module "vector_aggregator" {
   common_tags = local.common_tags
 }
 
-# --- Cribl Stream stack (leader + t1/t2 worker groups, each group behind NLB) ---
-# WHY: The second aggregator technology under test. Same tiered NLB shape as
-# Vector so hop topology is identical and only the vendor differs.
+# --- Cribl Stream stack (4 independent standalone single-instance nodes) ---
+# WHY: The second aggregator technology under test. Cribl Free supports only a
+# single worker group per leader, which can't represent two physically separate
+# tiers, so there is no leader/control-plane node — t1/t2 are standalone nodes,
+# each locally configured by Ansible, giving the same tiered NLB shape as the
+# Vector stack so hop topology is identical and only the vendor differs.
 module "cribl_stream" {
   source = "./modules/cribl-stream"
   providers = {
@@ -161,10 +164,8 @@ module "cribl_stream" {
 
   name_prefix           = "llt"
   vpc_id                = module.logging_network.vpc_id
-  vpc_cidr              = module.logging_network.vpc_cidr
   private_subnet_ids    = module.logging_network.private_subnet_ids
   worker_instance_type  = var.aggregator_instance_type
-  leader_instance_type  = var.cribl_leader_instance_type
   instance_profile_name = module.iam.aggregator_instance_profile_name
   aggregator_sg_id      = module.logging_network.aggregator_sg_id
 

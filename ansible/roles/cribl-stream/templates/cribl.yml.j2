@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# Cribl Stream standalone node-level config — tier {{ llt_role }}.
+# Rendered directly to this node's own $CRIBL_HOME/local/cribl/cribl.yml.
+#
+# TUNING §4.6 item 5 — Cribl worker processes set to vCPU count. This node
+# runs on m6i.xlarge (4 vCPU, PLAN §4.3); `workers.count` set to
+# cribl_worker_processes (4, defaults/main.yml) so the node runs exactly 4
+# internal worker processes (one per vCPU), maximizing parallelism, matching
+# PLAN §4.6.5's "Cribl worker processes set to vCPU count." docs.cribl.io/
+# stream/criblyml/ documents this exact key: "workers: count: <n>" with
+# schema comment "default: 1; if less than 1, the value is added to CPU
+# count" — this is a NODE-level setting (unlike the deleted cribl-leader
+# role's groups.yml `workerProcesses` key, which was a leader-pushed
+# PER-GROUP override for distributed mode; that mechanism no longer exists
+# now that each node is standalone). Parity counterpart to Vector's "defaults
+# to all cores" (recorded — no equivalent knob needed on the Vector side
+# since it already uses every core with no artificial cap; see
+# vector-aggregator/templates/vector.service.j2 comment).
+#
+# Discrepancy note (carried over from the pre-redesign leader-mode config,
+# still applicable): Cribl's Group-Settings-era UI prose documents this
+# setting's OWN default as -2 (vCPU-count-minus-2), while this exact
+# cribl.yml schema comment documents ITS OWN default as 1 — the two figures
+# are not reconciled in Cribl's own docs across the pages checked; recorded
+# as a discrepancy in docs/TUNING.md rather than silently picking one.
+workers:
+  count: {{ cribl_worker_processes }}

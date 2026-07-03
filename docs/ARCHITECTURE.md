@@ -12,8 +12,8 @@ disagree, `PLAN.md` governs.
 > **Diagram:** [`docs/diagrams/topology.mermaid`](diagrams/topology.mermaid) /
 > [`.svg`](diagrams/topology.svg) — rendered version of everything in this
 > section (both VPCs/subnets/AZs, SSM + S3 endpoints, PrivateLink endpoint
-> services ↔ interface endpoints, all four NLBs, aggregator fleets, leader, S3
-> buckets, SQS queues).
+> services ↔ interface endpoints, all four NLBs, aggregator fleets (Vector
+> tiers + standalone Cribl Stream nodes; no leader), S3 buckets, SQS queues).
 
 The experiment deliberately splits the pipeline across **two AWS accounts** in a
 **single region** (`us-east-2` default, `aws_region` variable; `PLAN.md` §4.1).
@@ -48,11 +48,16 @@ path under measurement.
 - **Vector aggregator stack** — Tier-1: 2 × `m6i.xlarge` behind internal NLB
   `llt-vagg-t1-nlb`; Tier-2: 2 × `m6i.xlarge` behind internal NLB
   `llt-vagg-t2-nlb`.
-- **Cribl Stream stack** — Leader 1 × `m6i.large`; worker group `t1`: 2 ×
-  `m6i.xlarge` behind `llt-cs-t1-nlb`; worker group `t2`: 2 × `m6i.xlarge`
-  behind `llt-cs-t2-nlb`. Self-hosted under the **Cribl Free license**
-  (≤ 1 TB/day — verify current terms at deploy time; all tiers are well below
-  this).
+- **Cribl Stream stack** — self-hosted under the **Cribl Free license**, which
+  supports at most a **single worker group per leader** — insufficient for
+  the two-tier design (which would need two groups). The two measured tiers
+  are therefore **4 independent single-instance standalone Cribl Stream
+  nodes**, with **no leader/control-plane node**; each node is self-configured
+  locally by Ansible (the same file-based config model as the Cribl Edge
+  agent). Tier-1: 2 × `m6i.xlarge` standalone behind `llt-cs-t1-nlb`; Tier-2:
+  2 × `m6i.xlarge` standalone behind `llt-cs-t2-nlb`. Each node is its own
+  Free single-instance deployment (≤ 1 TB/day — verify current terms at
+  deploy time; all tiers are well below this).
 - **VPC endpoint services (PrivateLink)** front the **Tier-1 NLBs only**.
   Tier-1 → Tier-2 traffic stays **inside** the logging VPC via the Tier-2 NLBs;
   it never crosses the account boundary.
@@ -75,13 +80,24 @@ A VRL `remap` transform appends the tier's receive timestamp to `hop_ts`
 
 ### 2.2 Cribl Stream stack
 
-A single **leader** (`m6i.large`) manages two worker groups. Worker group `t1`
-(2 × `m6i.xlarge`) sits behind `llt-cs-t1-nlb`; worker group `t2` behind
-`llt-cs-t2-nlb`. Workers run an **HTTP Raw source** (parity with Vector's `http`
-source) and a **Webhook destination** (to the next tier) or an **S3
-destination** (to a bucket). A **Eval function** appends the receive timestamp
-to `hop_ts`. For S3/S4 the worker input is an **S3 source** driven by SQS. The
-leader is on the management path only and is not itself a data hop.
+The Cribl Free license supports only a **single worker group per leader** —
+insufficient for this experiment's two-tier design, which needs two
+physically separate tiers. The stack is therefore **4 independent
+single-instance standalone Cribl Stream nodes** with **no leader/
+control-plane node**: Tier-1 (2 × `m6i.xlarge`) sits behind `llt-cs-t1-nlb`;
+Tier-2 (2 × `m6i.xlarge`) behind `llt-cs-t2-nlb`. Each node is configured
+**locally by Ansible** — file-based config pushed directly to the node, the
+same model already used for the Cribl Edge agent — rather than pushed from a
+leader's control plane. Standalone nodes preserve the two physically separate
+tiers the per-hop measurement requires and keep the 2×/tier + NLB-in-path
+parity with the Vector stack; a single worker group could not represent two
+distinct tiers (`PLAN.md` §4.3). Each node runs an **HTTP Raw source** (parity
+with Vector's `http` source) and a **Webhook destination** (to the next tier)
+or an **S3 destination** (to a bucket). An **Eval function** appends the
+receive timestamp to `hop_ts`. For S3/S4 the node's input is an **S3 source**
+driven by SQS. A recorded asymmetry (`PLAN.md` §4.6.5): Cribl Free may cap
+worker processes per node, versus Vector's all-cores default — documented in
+`docs/TUNING.md`, not equalized.
 
 ### 2.3 PrivateLink exposure
 

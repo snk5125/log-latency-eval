@@ -49,7 +49,7 @@ run concurrently within each run and are separated at analysis time via the
 ### 4.1 Accounts and region
 
 - **Sender account** — generator hosts (Linux + Windows) with forwarding agents.
-- **Logging account** — aggregator tiers, Cribl leader, landing + final S3 buckets.
+- **Logging account** — aggregator tiers (Vector + standalone Cribl Stream nodes), landing + final S3 buckets.
 - Single region for both accounts (default `us-east-2`, variable `aws_region`).
 - Terraform uses two aliased providers: `aws.sender`, `aws.logging`, driven by
   named CLI profiles supplied in a gitignored `terraform.tfvars`.
@@ -79,10 +79,21 @@ run concurrently within each run and are separated at analysis time via the
 - VPC `llt-logging-vpc` 10.20.0.0/16, 2 AZs.
 - **Vector aggregator stack:** Tier-1: 2 × `m6i.xlarge` behind internal NLB
   `llt-vagg-t1-nlb`; Tier-2: 2 × `m6i.xlarge` behind internal NLB `llt-vagg-t2-nlb`.
-- **Cribl Stream stack:** Leader 1 × `m6i.large`; worker group `t1`: 2 ×
-  `m6i.xlarge` behind `llt-cs-t1-nlb`; worker group `t2`: 2 × `m6i.xlarge`
-  behind `llt-cs-t2-nlb`. Self-hosted, **Cribl Free license** (≤1 TB/day —
-  verify current terms at deploy time; all tiers are well below this).
+- **Cribl Stream stack:** self-hosted under the **Cribl Free license**, which
+  supports at most a **single worker group per leader** — insufficient for the
+  two-tier design (which would need two groups). The two measured tiers are
+  therefore deployed as **independent single-instance standalone Cribl Stream
+  nodes** with **no leader/control-plane node**; each node is configured
+  locally by Ansible (the same file-based config model as the Cribl Edge
+  agent). Tier-1: 2 × `m6i.xlarge` standalone behind `llt-cs-t1-nlb`; Tier-2:
+  2 × `m6i.xlarge` standalone behind `llt-cs-t2-nlb`. Each node is its own Free
+  single-instance deployment (≤ 1 TB/day, well below at all tiers — verify
+  current terms at deploy time). **Rationale:** standalone nodes preserve the
+  two *physically separate* tiers the per-hop measurement requires and keep the
+  2×/tier + NLB-in-path parity with the Vector stack, while a single worker
+  group could not represent two distinct tiers. A recorded asymmetry (§4.6.5):
+  Free may cap Cribl worker processes per node, versus Vector's all-cores
+  default — documented in the tuning table, not equalized.
 - **VPC endpoint services** (PrivateLink) front the two Tier-1 NLBs only;
   Tier-1 → Tier-2 traffic stays inside the logging VPC via the Tier-2 NLBs.
 - **S3 buckets** (all logging account, SSE-S3, versioning off, lifecycle 7-day expiry):
@@ -143,8 +154,11 @@ rationale in `report/REPORT.md` (Methodology → Tuning Profile):
 4. **S3-source pickup (S3/S4):** SQS long-polling `WaitTimeSeconds=20`,
    immediate visibility, notification path (S3→SQS) is event-driven — no
    polling schedulers.
-5. **Process/thread scaling:** Cribl worker processes set to vCPU count;
-   Vector defaults to all cores — record both.
+5. **Process/thread scaling:** on each standalone Cribl Stream node, set worker
+   processes to vCPU count *if the Free license permits*; Free may cap this
+   (e.g. to a single process) — if so, record the cap as a documented asymmetry
+   versus Vector's all-cores default rather than equalizing it. Vector defaults
+   to all cores. Record both actual values from the deployed nodes.
 6. **NLBs:** cross-zone load balancing ON (removes AZ-affinity queuing
    asymmetry); target deregistration delay minimized; client keep-alive within
    NLB idle-timeout to avoid reconnect stalls.
@@ -249,7 +263,8 @@ docs/ARCHITECTURE.md, and report/REPORT.md:
 
 1. `topology.*` — two-account network topology: both VPCs/subnets/AZs, SSM +
    S3 endpoints, PrivateLink endpoint services ↔ interface endpoints, all four
-   NLBs, aggregator fleets, leader, S3 buckets, SQS queues.
+   NLBs, aggregator fleets (Vector tiers + standalone Cribl Stream nodes; no
+   leader), S3 buckets, SQS queues.
 2. `scenario-s1.*` … `scenario-s4.*` — one data-path/sequence diagram per
    scenario showing every hop **with the timestamp capture point labeled**
    (`t_gen` → `hop_ts.agent` → `hop_ts.agg1` → `hop_ts.agg2` → PutObject).
@@ -280,7 +295,7 @@ latency-testing/
 │   └── roles/
 │       ├── common/  ├── time-sync/  ├── event-generator/
 │       ├── vector-agent/  ├── cribl-edge/
-│       ├── vector-aggregator/  ├── cribl-leader/  └── cribl-worker/
+│       ├── vector-aggregator/  └── cribl-stream/  # standalone Cribl nodes (no leader)
 ├── harness/
 │   ├── generator/eventgen.py           # cross-platform (Linux + Windows py)
 │   ├── orchestrator/run_matrix.py      # drives 48 runs via SSM
@@ -301,7 +316,7 @@ latency-testing/
 ## 7. Conventions (binding on all components)
 
 - Resource names/tags: prefix `llt-`; tags `Project=llt`,
-  `Role=<generator|agg-t1|agg-t2|leader>`, `Stack=<vector|cribl>`, `Os=<linux|windows>`.
+  `Role=<generator|agg-t1|agg-t2>`, `Stack=<vector|cribl>`, `Os=<linux|windows>`.
   Ansible dynamic inventory groups derive from these tags.
 - All Terraform variables have descriptions; every resource/module has a
   comment explaining *why it exists in the experiment*, not just what it is.

@@ -1,9 +1,11 @@
 # =============================================================================
-# roles/cribl-leader/handlers/main.yml
+# roles/cribl-stream/handlers/main.yml
 # =============================================================================
 ---
-- name: Restart cribl leader
+- name: Restart cribl stream
   ansible.builtin.systemd:
     name: "{{ cribl_service_name }}"
     state: restarted
     enabled: true
+  # Standalone node reloads local/cribl/ config on restart (same mechanism as
+  # cribl-edge's standalone reload — no leader/commit/deploy step exists).

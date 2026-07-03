@@ -77,15 +77,9 @@ variable "generator_instance_type" {
 }
 
 variable "aggregator_instance_type" {
-  description = "Instance type for Vector aggregator tiers and Cribl worker groups. PLAN.md §4.3 specifies m6i.xlarge for all aggregator/worker nodes."
+  description = "Instance type for Vector aggregator tiers and the standalone Cribl Stream nodes. PLAN.md §4.3 specifies m6i.xlarge for all aggregator/node instances."
   type        = string
   default     = "m6i.xlarge"
-}
-
-variable "cribl_leader_instance_type" {
-  description = "Instance type for the single Cribl Stream leader node. PLAN.md §4.3 specifies m6i.large (control plane only; not on the data path)."
-  type        = string
-  default     = "m6i.large"
 }
 
 # ---------------------------------------------------------------------------

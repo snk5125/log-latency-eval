@@ -1,0 +1,56 @@
+# =============================================================================
+# roles/cribl-stream/tasks/main.yml — install pinned Cribl Stream (standalone)
+# =============================================================================
+# Aggregator fleet is Linux-only (PLAN §4.3 m6i.xlarge), so no Windows branch
+# (mirrors vector-aggregator). This is a SINGLE-INSTANCE STANDALONE Cribl
+# Stream node: no leader, no worker-group join, no distributed port, no auth
+# token. The downloaded package's default product mode is already Stream (no
+# `mode-edge`/`mode-worker`/`mode-master` verb is needed — those select Edge
+# product mode or distributed leader/worker mode respectively; a standalone
+# Stream node needs neither), so this role skips straight to boot-start +
+# config, exactly mirroring cribl-edge's standalone install shape.
+---
+- name: Download pinned Cribl package
+  ansible.builtin.get_url:
+    url: "{{ cribl_download_linux }}"
+    dest: "/tmp/cribl-{{ cribl_version }}.tgz"
+    mode: "0644"
+
+- name: Unpack Cribl
+  ansible.builtin.unarchive:
+    src: "/tmp/cribl-{{ cribl_version }}.tgz"
+    dest: /opt
+    remote_src: true
+    # tgz unpacks to /opt/cribl (== cribl_home).
+
+- name: Ensure standalone local config directory exists
+  ansible.builtin.file:
+    path: "{{ cribl_local }}"
+    state: directory
+    mode: "0755"
+  # $CRIBL_HOME/local/cribl — where standalone (no leader) config files live,
+  # identical convention to cribl-edge's cribl_edge_local_linux.
+
+- name: Record exact deployed Cribl version as evidence
+  ansible.builtin.command: "{{ cribl_home }}/bin/cribl version"
+  register: _cribl_stream_version_out
+  changed_when: false
+  failed_when: false
+  # PLAN §7: record exact deployed version to evidence.
+
+- name: Enable Cribl boot-start as a systemd service (standalone, root)
+  ansible.builtin.command: >-
+    {{ cribl_home }}/bin/cribl boot-start enable -m systemd -u root
+  register: _cribl_stream_bootstart
+  changed_when: "'already' not in (_cribl_stream_bootstart.stdout | default(''))"
+  # -m systemd is the init-system selector boot-start expects (same flag
+  # cribl-edge's Linux install uses); -u root runs the service as root.
+
+- name: Ensure Cribl service is started
+  ansible.builtin.systemd:
+    name: "{{ cribl_service_name }}"
+    state: started
+    enabled: true
+
+- name: Template scenario/tier config for this node
+  ansible.builtin.include_tasks: configure.yml

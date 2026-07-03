@@ -8,7 +8,7 @@ output "vpc_id" {
 }
 
 output "vpc_cidr" {
-  description = "Logging VPC CIDR (used by dependent SGs, e.g. Cribl leader)."
+  description = "Logging VPC CIDR (used by dependent SGs, e.g. the aggregator SG)."
   value       = aws_vpc.this.cidr_block
 }
 

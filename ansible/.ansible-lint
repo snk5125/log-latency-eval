@@ -4,7 +4,7 @@
 # skip_list rationale:
 #   role-name: PLAN §6 defines the role directory names with HYPHENS
 #     (event-generator, vector-agent, vector-aggregator, cribl-edge,
-#     cribl-leader, cribl-worker, time-sync). ansible-lint's default idiom
+#     cribl-stream, time-sync). ansible-lint's default idiom
 #     wants ^[a-z][a-z0-9_]*$ (underscores). The PLAN is the binding spec
 #     (PLAN §7), so we keep the hyphenated names it mandates and skip this
 #     stylistic rule rather than diverge from the repo layout the other

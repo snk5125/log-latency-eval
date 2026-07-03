@@ -15,13 +15,13 @@
 #   run_id     : s{n}-{agent}-{agg}-{vol}-{YYYYMMDDTHHMMSSZ}  (PLAN §3)
 #
 # Plus deploy-time infra vars (from group_vars/extra-vars): llt_artifacts_bucket,
-# llt_aws_region, bucket names, NLB DNS names, SQS queue names, leader address.
+# llt_aws_region, bucket names, NLB DNS names, SQS queue names.
 #
 # EFFICIENCY: only the cell's agent stack AND aggregator stack are touched.
 #   agent=vec  -> reconfigure Vector agent only (Cribl Edge left alone)
 #   agent=ce   -> reconfigure Cribl Edge only
 #   aggregator=vagg -> reconfigure Vector aggregators only
-#   aggregator=cs   -> reconfigure Cribl workers only
+#   aggregator=cs   -> reconfigure Cribl Stream standalone nodes only
 # The generator config is always re-templated (run_id + EPS tier change per run).
 # =============================================================================
 ---
@@ -143,18 +143,18 @@
         - aggregator == 'vagg'
         - llt_stack == 'vector'
 
-# Cribl Stream aggregator path (aggregator=cs) — worker groups t1/t2.
-# C5 RETARGET: this play now runs on the LEADER, not the workers. Workers are
-# leader-managed in distributed mode — templating directly onto a worker's own
-# groups/<g>/local/cribl/ would be silently clobbered on the next commit+
-# deploy, so the leader is the only host that may own this config. The leader
-# templates BOTH groups' data-plane config (t1 and t2 — a single cell's
-# scenario switch affects both tiers) and commits+deploys each via its REST
-# API (cribl-leader role, tasks/configure.yml, looped per group).
-- name: Re-template Cribl worker-group config on the leader for this scenario
-  hosts: role_leader
+# Cribl Stream aggregator path (aggregator=cs) — standalone nodes t1/t2.
+# PLAN §4.3: Cribl Free supports only a single worker group per leader, so
+# each tier is an INDEPENDENT SINGLE-INSTANCE STANDALONE Cribl Stream node —
+# no leader, no worker groups, no commit/deploy REST calls. Re-templates
+# BOTH tiers' local/cribl/ config directly on each node (a single cell's
+# scenario switch affects both tiers) and restarts the service — the same
+# file-config re-template-and-restart shape as the Vector-aggregator path
+# right above.
+- name: Re-template Cribl Stream standalone node config for this scenario
+  hosts: role_agg_t1:role_agg_t2
   gather_facts: true
-  # Leader host is Linux-only (PLAN §4.3) — plain become (C1).
+  # Aggregator fleet is Linux-only (PLAN §4.3) — plain become (C1).
   become: true
   vars:
     ansible_connection: aws_ssm
@@ -163,13 +163,10 @@
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
   tasks:
-    - name: Re-template + commit + deploy each worker group's config
+    - name: Re-template Cribl Stream config + restart
       ansible.builtin.include_role:
-        name: cribl-leader
+        name: cribl-stream
         tasks_from: configure.yml
-      loop: "{{ cribl_worker_groups }}"
-      loop_control:
-        loop_var: _group
       when:
         - aggregator == 'cs'
         - llt_stack == 'cribl'

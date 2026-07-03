@@ -9,7 +9,7 @@
 #      (Ansible uses the aws_ssm connection plugin — no host is usable until then).
 #   4. ansible-galaxy install -r requirements.yml (collections/roles).
 #   5. gen-ansible-vars.sh — render group_vars/all/generated_infra.yml from
-#      Terraform outputs (buckets, endpoint DNS, SQS URLs, Cribl leader IP).
+#      Terraform outputs (buckets, endpoint DNS, SQS URLs).
 #   6. Upload harness/generator/eventgen.py to the artifacts bucket (agents pull it).
 #   7. ansible-playbook site.yml (installs agents, aggregators, generator, time-sync).
 #   8. Print next-steps (run_matrix.py invocation).
@@ -39,9 +39,10 @@ LLT_LOGGING_PROFILE="${LLT_LOGGING_PROFILE:-llt-logging}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
 
 # Expected managed-instance count = 4 generators (2 lin + 2 win) + aggregator hosts.
-# Vector stack: 4 agg (t1x2 + t2x2). Cribl stack: 1 leader + 4 workers. Total hosts
-# expecting SSM registration = 4 + 4 + 5 = 13. Overridable if the matrix changes.
-LLT_EXPECTED_SSM_INSTANCES="${LLT_EXPECTED_SSM_INSTANCES:-13}"
+# Vector stack: 4 agg (t1x2 + t2x2). Cribl stack: 4 standalone nodes (t1x2 + t2x2;
+# no leader). Total hosts expecting SSM registration = 4 + 4 + 4 = 12. Overridable
+# if the matrix changes.
+LLT_EXPECTED_SSM_INSTANCES="${LLT_EXPECTED_SSM_INSTANCES:-12}"
 LLT_SSM_WAIT_SECS="${LLT_SSM_WAIT_SECS:-600}"
 
 # ------------------------------------------------------------------------------
@@ -143,8 +144,8 @@ fi
 # ------------------------------------------------------------------------------
 # 5. Terraform → Ansible variable bridge (gen-ansible-vars.sh) renders the
 #    gitignored group_vars/all/generated_infra.yml with live bucket names,
-#    PrivateLink endpoint DNS, SQS URLs, and the Cribl leader IP. site.yml and
-#    configure-scenario.yml consume these vars, so this MUST precede step 7.
+#    PrivateLink endpoint DNS, and SQS URLs. site.yml and configure-scenario.yml
+#    consume these vars, so this MUST precede step 7.
 # ------------------------------------------------------------------------------
 log "5/8 generate Ansible infra vars from Terraform outputs"
 LLT_SENDER_PROFILE="$LLT_SENDER_PROFILE" LLT_LOGGING_PROFILE="$LLT_LOGGING_PROFILE" \
@@ -169,7 +170,7 @@ fi
 
 # ------------------------------------------------------------------------------
 # 7. Base configuration converge (site.yml): common, time-sync, agents,
-#    aggregators, cribl leader/workers, event-generator role (PLAN §6).
+#    aggregators, standalone Cribl Stream nodes, event-generator role (PLAN §6).
 #    Inventory is the inventories/ DIRECTORY (sender + logging aws_ec2 files
 #    union into one host set); the env vars below feed the plugin's profile
 #    lookups and the per-host llt_ssm_profile compose expressions.

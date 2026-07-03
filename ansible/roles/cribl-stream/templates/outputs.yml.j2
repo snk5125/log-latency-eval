@@ -1,18 +1,19 @@
 # {{ ansible_managed }}
-# Cribl worker-group outputs — group {{ _group }}, scenario {{ scenario }}.
-# C5: templated and committed/deployed FROM THE LEADER — see inputs.yml.j2 note.
+# Cribl Stream standalone node outputs — tier {{ llt_role }}, scenario {{ scenario }}.
+# Rendered directly to this node's own $CRIBL_HOME/local/cribl/outputs.yml —
+# see inputs.yml.j2 note (no leader, no commit/deploy).
 # MIRRORS vector-aggregator sinks:
-#   t1 + S1/S3 -> final S3 (5s/10MB)
-#   t1 + S2/S4 -> Webhook NDJSON to Tier-2 NLB :8081 (1s)
-#   t2         -> final S3 (5s/10MB)
+#   agg_t1 + S1/S3 -> final S3 (5s/10MB)
+#   agg_t1 + S2/S4 -> Webhook NDJSON to Tier-2 NLB :8081 (1s)
+#   agg_t2         -> final S3 (5s/10MB)
 outputs:
-{% if _group == 't1' %}
+{% if llt_role == 'agg_t1' %}
 {% if scenario in ['s1', 's3'] %}
   final_s3:
     type: s3
     bucket: "{{ cribl_final_bucket }}"
     region: "{{ cribl_aws_region }}"
-    # M7: destPath is a JS TEMPLATE LITERAL in Cribl (backtick-delimited with
+    # destPath is a JS TEMPLATE LITERAL in Cribl (backtick-delimited with
     # ${...} interpolation) — plain-string concatenation without backticks is
     # inert text, not an interpolated expression. partitionExpr neutralizes
     # Cribl's default date-based partitioning so the key comes out exactly
@@ -20,7 +21,7 @@ outputs:
     # analyze.py's prefix listing (PLAN §5.1 host_os partition).
     destPath: "`final/{{ run_id }}/${host_os}`"
     partitionExpr: "''"
-    # M5: Cribl S3 destination formats are json|raw|parquet — "ndjson" is
+    # Cribl S3 destination formats are json|raw|parquet — "ndjson" is
     # invalid. `format: json` is Cribl's newline-delimited-JSON-per-file mode
     # (parity preserved with Vector's framing.method: newline_delimited).
     format: json
@@ -43,7 +44,7 @@ outputs:
     type: webhook
     url: "http://{{ cribl_agg_t2_nlb }}:{{ cribl_t2_http_port }}"
     method: POST
-    format: json           # M5: json, not ndjson (see final_s3 note above)
+    format: json           # json, not ndjson (see final_s3 note above)
     # CONTROLLED CONSTANT (PLAN §4.5/§4.6): inter-tier HTTP batch flush stays
     # at 1 s — DO NOT CHANGE, not a §4.6 tuning knob.
     flushPeriodSec: {{ cribl_http_flush_secs }}   # 1 s inter-tier (== Vector)
@@ -92,5 +93,5 @@ outputs:
     maxFileOpenTimeSec: {{ cribl_s3_flush_secs }}
     maxFileIdleTimeSec: {{ cribl_s3_flush_secs }}
     # TUNING §4.6 item 3 note: no separate buffer/PQ toggle applies to the
-    # S3 destination type (see t1's final_s3 comment above).
+    # S3 destination type (see agg_t1's final_s3 comment above).
 {% endif %}
