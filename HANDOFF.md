@@ -4,11 +4,52 @@
 can resume this project without re-deriving state. Read this, then PLAN.md
 (the binding spec), then the referenced files as needed.
 
-**Last updated:** 2026-07-03
-**Repo state:** local git, branch `main`, HEAD `fc9655e`, 123 tracked files.
-**Phase:** BUILD (PLAN §8 phase 1) — ⏸ paused by user. **No AWS deployment
-has occurred. No costs incurred. No results exist yet — REPORT.md findings
-are all [PENDING].**
+**Last updated:** 2026-07-03 (session 2: full implementation review + fixes,
+diagrams #8, tuning #9/#10)
+**Repo state:** local git, branch `main`. **Phase:** BUILD (PLAN §8 phase 1) —
+build artifacts now COMPLETE (all pending build tasks #8/#9/#10 done; a
+cross-component review found + fixed ~30 deploy-blocking defects). Still
+⏸ **paused before deployment.** **No AWS deployment has occurred. No costs
+incurred. No results exist yet — REPORT.md findings are all [PENDING].**
+
+**Session-2 changes (all committed, offline-verified, NOT deployed):**
+- Full spec-conformance review (4 review agents) → fixes across terraform,
+  ansible, harness, scripts. Terraform: PrivateLink endpoint SG opened to :8080
+  (S1/S2 were dead), artifacts bucket cross-account policy, IAM provider
+  pinning, TCP health checks, AZ-by-zone-id (cross-account PrivateLink
+  alignment), deregistration_delay, Name tags `…-01`. Ansible: `become` on all
+  Linux plays (aws_ssm runs as ssm-user), `llt_role` hyphen→underscore, Vector
+  aws_s3 JSON decode, Cribl workers made leader-managed (config in
+  `cribl-leader/templates/groups/`, commit+deploy via REST; worker-local
+  templates deleted), worker join port/token fixed, Windows Python+NSSM install,
+  Edge MSI, JSON breakers, forward-slash Windows config paths, cross-pairing
+  (agent targets the cell's aggregator). Harness: eventgen `--config`, EPS/
+  duration plumbing, SSM manifest upload, `(host_os,seq)` analyzer keying,
+  streaming aggregation, two-flush e2e adjustment, SAFE two-phase
+  `--parallel-stacks` (old partition shared generator hosts). Scripts: teardown
+  `mapfile`→portable + 1000-key chunk + `Project=llt` guard; preflight jq/tfvars.
+- #8 diagrams: `docs/diagrams/` (topology, scenario-s1..s4, measurement) —
+  Mermaid + rendered SVG, referenced from README/ARCHITECTURE/REPORT.
+- #9/#10 tuning: PLAN §4.6 items 1–8 applied to ansible roles; `docs/TUNING.md`
+  (source of truth) + REPORT §3.8 mirror, gain column `[Unverified]`.
+- Offline verification (all PASS): `terraform validate`; ansible
+  `--syntax-check` ×3; `analyze.py --self-test` (67 assertions); `run_matrix
+  --dry-run` serial + `--parallel-stacks` (48 cells, safe partition, 0 leftover);
+  `bash -n` ×4; 76 template renders; batch constants 5s/10MB/1s + ports
+  8080/8081 + `hop_ts.*` confirmed unchanged by the tuning pass.
+
+**⚠ DEPLOY-TIME TODOs (verify before first apply — could not be validated
+offline):**
+1. **Cribl Free license + distributed mode.** The leader + 2-worker-group
+   design assumes Free/self-hosted supports distributed mode; NOT confirmed
+   against current Cribl terms. PLAN §4.3 already flags "verify at deploy time."
+   If Free forbids it, the Cribl stack needs a single-instance rethink.
+2. **4 Cribl 4.13 config keys are best-guess** (marked TODO in-config +
+   `docs/TUNING.md` §6): File Monitor `servicePeriodSecs`, Webhook `concurrency`,
+   S3 source `pollTimeoutSecs`, `workerProcesses`. Confirm against a live 4.13
+   schema; wrong keys are ignored/error at converge (deploy is gated anyway).
+3. **M3/M12 in-config TODOs:** exact Cribl Edge Windows MSI URL, and the
+   `users.json` bcrypt admin-password seeding scheme for 4.13.
 
 ---
 
@@ -65,20 +106,18 @@ diagram deliverables, §7 binding conventions, §9 build work split.
    `LLT_AWS_PROFILE_SENDER`/`LLT_AWS_PROFILE_LOGGING`; run_matrix.py
    exports these env vars (setdefault) from its --profile args.
 
-### Pending build tasks (user-approved, NOT started — next work)
-- **#8 Diagrams** (PLAN §5A): Mermaid + SVG in `docs/diagrams/` — topology,
-  scenario-s1..s4 with timestamp capture points, measurement derivation.
-  Must match deployed names/ports/buckets exactly.
-- **#9 Low-latency tuning** (PLAN §4.6 items 1–8): apply parity-preserving
-  profile to Ansible roles. Constraints that may NOT change: HTTP/NDJSON
-  transport, §4.5 batch constants, instance types, topology, equal treatment
-  of both stacks.
-- **#10 Tuning reference table** (PLAN §4.6 table spec): `docs/TUNING.md`
-  (source of truth) + mirror in REPORT.md — setting/default/tuned/why/gain;
-  gain column = [Unverified] vendor-doc expectation until measured.
-  #10 depends on #9. Suggested split: one subagent for #8, one for #9+#10.
+### Pending build tasks — ✅ ALL COMPLETE (session 2)
+- **#8 Diagrams** (PLAN §5A): ✅ `docs/diagrams/` topology + scenario-s1..s4 +
+  measurement, Mermaid + rendered SVG, names/ports/buckets match deployed
+  reality, referenced from README/ARCHITECTURE/REPORT.
+- **#9 Low-latency tuning** (PLAN §4.6 items 1–8): ✅ applied to Ansible roles,
+  parity-preserving; batch constants/ports/topology/hop_ts unchanged (grep-
+  verified). Read-from-end tension (§4.6.1) resolved: generator truncates its
+  file per run + agent starts first, so beginning==end offset (documented).
+- **#10 Tuning reference table**: ✅ `docs/TUNING.md` (source of truth) + REPORT
+  §3.8 mirror; gain column `[Unverified]` vendor-doc expectation until measured.
 
-### After build tasks complete → still ⏸ before phase 2 (deploy)
+### Build phase artifacts COMPLETE → still ⏸ before phase 2 (deploy)
 
 ## 4. Execution plan after user authorizes deploy (PLAN §8)
 

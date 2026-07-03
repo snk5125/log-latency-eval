@@ -42,3 +42,32 @@ vector_landing_sqs_url: "https://sqs.us-east-2.amazonaws.com/REPLACE/llt-landing
 vector_s3_batch_timeout_secs: 5           # ->S3 hops: 5 s
 vector_s3_batch_max_bytes: 10485760       # 10 MB
 vector_http_batch_timeout_secs: 1         # inter-aggregator HTTP: 1 s (PLAN §4.5)
+
+# --- Low-latency tuning profile (PLAN §4.6) — see docs/TUNING.md -----------
+# Item 3: buffer sizing so 10k EPS never blocks. Same rationale as
+# vector-agent's vector_buffer_max_events (defaults/main.yml there): the
+# 500-event default fills in ~50 ms at 10k EPS/host; sized generously here
+# too. Applies to every internal sink in this role (T1->T2 HTTP and both
+# tiers' ->final-S3 sinks). Vendor doc:
+# https://vector.dev/docs/reference/configuration/sinks/http/ (buffer.*).
+vector_buffer_max_events: 100000
+
+# Items 6-8: RECORD ONLY — see the full citations in
+# ansible/roles/vector-agent/defaults/main.yml ("Items 6-8" block). Item 6's
+# NLB cross-zone/deregistration-delay terraform citations for THIS stack:
+# terraform/modules/vector-aggregator/main.tf:110 (t1
+# enable_cross_zone_load_balancing) / :138 (t1 deregistration_delay) and
+# :172 (t2 enable_cross_zone_load_balancing) / :197 (t2 deregistration_delay).
+# No aggregator role config change for items 6-8.
+
+# Item 4: SQS source poll wait. Vector's aws_s3 source exposes `sqs.poll_secs`
+# — its own internal ReceiveMessage wait-time parameter (there is no
+# separately named "WaitTimeSeconds" key; poll_secs IS what's passed to the
+# long-poll wait). Vendor docs explicitly say this "should not be changed
+# unless instructed" (default 15 s) — floored to the requested 20 s ceiling
+# per PLAN §4.6.4's literal `WaitTimeSeconds=20` (AWS SQS's own hard
+# maximum for long-poll wait time; values above 20 are rejected by SQS
+# itself, so 20 IS the floor-est "long-poll as long as possible" setting).
+# Vendor doc: https://vector.dev/docs/reference/configuration/sources/aws_s3/
+# (sqs.poll_secs, default 15).
+vector_sqs_poll_secs: 20

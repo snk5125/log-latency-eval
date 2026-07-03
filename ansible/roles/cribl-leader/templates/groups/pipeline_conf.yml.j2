@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# Cribl worker-group pipeline "stamp_agg" — group {{ _group }}.
+# C5: templated and committed/deployed FROM THE LEADER — see inputs.yml.j2 note.
+# FIELD NAMES are IDENTICAL to the Vector aggregator VRL remap and LOAD-BEARING
+# for analysis (PLAN §5.1). Date.now() = ms epoch, matching Vector's ms unit.
+#
+# C4 SHAPE: rendered to groups/{{ _group }}/local/cribl/pipelines/stamp_agg/
+# conf.yml — the pipeline id comes from the DIRECTORY name, so the conf body
+# is the functions list directly, with NO `pipelines: <id>: conf:` wrapper.
+{% if _group == 't1' %}
+functions:
+  - id: eval
+    filter: "true"
+    conf:
+      add:
+        - name: hop_ts.agg1
+          value: Date.now()
+{% else %}
+functions:
+  - id: eval
+    filter: "true"
+    conf:
+      add:
+        - name: hop_ts.agg2
+          value: Date.now()
+{% endif %}
+groups: {}

@@ -10,17 +10,69 @@
 #             = S3/S4 -> aws_s3 to landing bucket, 5s/10MB batch (PLAN §4.5)
 # =============================================================================
 
-data_dir: "{{ '/var/lib/vector' if ansible_os_family != 'Windows' else 'C:\\ProgramData\\Vector\\data' }}"
+{# C11: forward slashes ONLY — this string is rendered into config content,
+   not consumed by a win_* module. Backslashes here produce illegal escapes
+   (\P, \l, \g...) inside the double-quoted YAML scalar and Vector rejects
+   the config. #}
+data_dir: "{{ '/var/lib/vector' if ansible_os_family != 'Windows' else 'C:/ProgramData/Vector/data' }}"
 
 sources:
-  # File tail of the generator output. read_from: beginning so warm-up events
-  # are also captured (orchestrator/analysis windows out warm-up, PLAN §3/§5).
+  # File tail of the generator output.
+  #
+  # TUNING §4.6 item 1 — read_from DECISION (documented per PLAN §4.6.1's
+  # explicit "resolve the read-from-beginning-vs-end tension" instruction):
+  # §4.6.1 nominally calls for read_from: end (avoid re-reading stale data on
+  # agent restart). We keep read_from: beginning here, and it is
+  # LATENCY-NEUTRAL, not a violation, because of how the generator lifecycle
+  # actually works (verified in harness/generator/eventgen.py +
+  # harness/orchestrator/run_matrix.py):
+  #   1. The agent service is already installed, running, and tailing this
+  #      path BEFORE any run starts (role installs it once; the orchestrator
+  #      only re-templates config + restarts it between scenario changes —
+  #      see configure.yml — it never starts the AGENT per-run).
+  #   2. The generator is a SEPARATE service, started by the orchestrator via
+  #      SSM only at the top of each cell (run_matrix.py execute_cell phase
+  #      3, "start generators" — AFTER the scenario is configured/agent
+  #      restarted in phases 1-2).
+  #   3. eventgen.py's RotatingWriter.__init__() calls self._open_new() with
+  #      the DEFAULT mode="w" every time the generator process starts —
+  #      i.e. the output file is TRUNCATED TO EMPTY at the start of every
+  #      run (eventgen.py class RotatingWriter, _open_new(self, mode="w")).
+  # Consequently "beginning" and "end" of THIS file are the SAME byte offset
+  # (0) at the moment each run's data starts flowing — there is no stale
+  # prior-run data to skip, because the prior run's data no longer exists in
+  # the file by the time this run's bytes are written. read_from: beginning
+  # is therefore equivalent to read_from: end for this generator/agent
+  # lifecycle pairing, and is kept because it ALSO captures warm-up events
+  # for windowing (PLAN §3/§5) without any latency cost — end would provide
+  # no benefit here and would only matter if the file persisted/appended
+  # across runs (it does not; rotation on size overflow mid-run is the only
+  # other truncation path, and that is a within-run backup rename, not
+  # relevant to inter-run replay). Vendor doc (read_from default is
+  # "beginning"): https://vector.dev/docs/reference/configuration/sources/file/
   gen_file:
     type: file
     include:
-      - "{{ vector_source_path_win if ansible_os_family == 'Windows' else vector_source_path_linux }}"
+      # C11: forward-slash form on Windows (vector_source_path_win_fwd) — the
+      # backslash form (vector_source_path_win) is reserved for win_* modules.
+      - "{{ vector_source_path_win_fwd if ansible_os_family == 'Windows' else vector_source_path_linux }}"
     read_from: beginning
-    # No multiline: each NDJSON event is a single line (PLAN §5.1).
+    # TUNING §4.6 item 1 — glob_minimum_cooldown_ms floored from the 1000 ms
+    # default to 10 ms (vector_file_glob_cooldown_ms, defaults/main.yml). This
+    # is the delay between file-DISCOVERY calls (relevant when this file is
+    # first created/reappears after truncation, e.g. at the start of each
+    # run) — NOT the read latency of an already-open/tailed file, which is
+    # OS-notify-driven (inotify/ReadDirectoryChangesW) in Vector 0.49 and has
+    # no separate poll-interval config. Flooring this value minimizes the
+    # window between the generator's first write and Vector noticing the
+    # (re)created file. Default 1000 ms:
+    # https://vector.dev/docs/reference/configuration/sources/file/
+    glob_minimum_cooldown_ms: {{ vector_file_glob_cooldown_ms }}
+    # No multiline: each NDJSON event is a single line (PLAN §5.1). TUNING
+    # §4.6 item 1 — no `multiline.*` block is configured (Vector 0.49 requires
+    # explicit multiline.start_pattern/condition_pattern/mode/timeout_ms to
+    # enable it; omitting the block means line-based reading, i.e. multiline
+    # aggregation is OFF, matching the "no multiline aggregation" requirement).
 
 transforms:
   # VRL remap stamps the agent hop timestamp. FIELD NAME hop_ts.agent is fixed
@@ -40,43 +92,121 @@ transforms:
 sinks:
 {% if scenario in ['s1', 's2'] %}
   # ---- S1/S2: HTTP NDJSON to Tier-1 aggregator NLB :8080 (PLAN §4.4) --------
+  # CROSS-PAIRING (C10): target the CELL's aggregator (llt_t1_endpoint),
+  # NOT unconditionally vector_agg_t1_nlb — this agent may be running in a
+  # Cribl-aggregator cell (aggregator=cs), in which case it must hit the
+  # Cribl worker t1 NLB instead.
   to_agg_t1:
     type: http
     inputs: [stamp_agent]
-    uri: "http://{{ vector_agg_t1_nlb }}:{{ vector_agg_t1_port }}"
+    uri: "http://{{ llt_t1_endpoint }}:{{ vector_agg_t1_port }}"
     method: post
+    # TUNING §4.6 item 2 — connection reuse/keep-alive: Vector's HTTP sink has
+    # NO explicit keep-alive/connection-reuse config key in 0.49 — its
+    # underlying HTTP client (hyper) reuses connections automatically and
+    # this is not exposed as a tunable. Recorded in docs/TUNING.md's parity
+    # ledger as "no equivalent knob to set" (there is nothing to turn on; it
+    # is always-on and non-configurable) rather than silently omitted.
+    #
+    # TUNING §4.6 item 6 — client keep-alive vs NLB idle timeout: because
+    # Vector does not expose a client-side keep-alive INTERVAL setting either,
+    # there is no config value here to place below the NLB's idle timeout
+    # (default 350 s for TCP flows, docs.aws.amazon.com/elasticloadbalancing/
+    # latest/network/network-load-balancers.html#connection-idle-timeout).
+    # Practically this is not a risk at our request rates (10k EPS/host keeps
+    # connections continuously busy, far under any 350 s idle window), so no
+    # asymmetry vs Cribl's explicit 120 s keep-alive (see cribl-edge
+    # outputs.yml.j2) translates into a latency difference in this
+    # experiment. Recorded as a parity-ledger "no equivalent" item.
+    #
+    # TUNING §4.6 item 2 — compression DISABLED (CPU-for-latency trade on the
+    # private NLB link: private-network bandwidth is not the constraint here,
+    # and gzip/zstd encode/decode adds CPU-bound latency per request). `none`
+    # is ALSO Vector's documented default, so this line is explicit-for-the-
+    # record rather than a behavior change. Vendor doc (compression default
+    # "none"): https://vector.dev/docs/reference/configuration/sinks/http/
+    compression: none
     encoding:
       codec: json          # one JSON object per line == NDJSON over HTTP POST
     framing:
       method: newline_delimited
     request:
-      # Small inter-node batch keeps agent->T1 hop latency low; the controlled
-      # S3 batch (5s) only applies at the ->S3 hops (PLAN §4.5).
+      # TUNING §4.6 item 2 — adaptive request concurrency (scales with
+      # observed latency/throughput instead of a fixed cap) is ALSO Vector's
+      # documented default in 0.49 — kept explicit here as the record of
+      # intent rather than an incidental default. Vendor doc:
+      # https://vector.dev/docs/reference/configuration/sinks/http/
+      # ("request.concurrency" default "adaptive").
       concurrency: adaptive
+      # TUNING §4.6 item 2 — "no retry backoff inflation at steady state":
+      # Vector's own defaults (initial backoff 1 s, max backoff duration 30 s)
+      # are already the non-inflating steady-state behavior the spec asks
+      # for — retries only engage on failure, and at 10k EPS/steady-state
+      # healthy links they should not fire at all. Recorded explicitly rather
+      # than silently relying on the default so the tuning table has a
+      # citable row. Vendor doc (retry_initial_backoff_secs=1,
+      # retry_max_duration_secs=30):
+      # https://vector.dev/docs/reference/configuration/sinks/http/
+      retry_initial_backoff_secs: 1
+      retry_max_duration_secs: 30
+    # TUNING §4.6 item 3 — in-memory buffer, sized for 10k EPS, overflow
+    # BLOCKS (never drops, never spills to disk on this measured hop).
+    # `type: memory` and `when_full: block` are ALSO Vector's own defaults in
+    # 0.49 (buffer.type default "memory", buffer.when_full default "block")
+    # — set explicitly per PLAN §4.6.3's "documented" requirement rather than
+    # left implicit. max_events raised from the 500-event default (which
+    # would fill in ~50 ms at 10k EPS) to vector_buffer_max_events (100000,
+    # defaults/main.yml) so a multi-second stall does not invoke when_full
+    # under the heaviest volume tier. Vendor doc:
+    # https://vector.dev/docs/reference/configuration/sinks/http/ (buffer.*
+    # block; default type "memory", default when_full "block", default
+    # max_events 500).
+    buffer:
+      type: memory
+      max_events: {{ vector_buffer_max_events }}
+      when_full: block
     batch:
       # Agent->aggregator HTTP is near-real-time; keep a tiny flush so the hop
       # measures transport, not buffering. (Aggregator inter-tier HTTP uses the
       # 1 s constant per PLAN §4.5; agent egress is kept minimal here.)
+      # CONTROLLED CONSTANT — DO NOT CHANGE (PLAN §4.5/§4.6): this value is
+      # NOT one of the §4.6 tuning knobs; §4.6 explicitly forbids touching
+      # the batch timeout/size while tuning concurrency/keepalive/compression.
       timeout_secs: 1
     healthcheck:
       enabled: false       # NLB target may float; do not block startup.
 {% else %}
   # ---- S3/S4: aws_s3 to the landing bucket, 5s/10MB batch (PLAN §4.5) -------
+  # CROSS-PAIRING (C10): land in the CELL's landing bucket (llt_landing_bucket),
+  # NOT unconditionally vector_landing_bucket — see rationale on to_agg_t1 above.
   to_landing_s3:
     type: aws_s3
     inputs: [stamp_agent]
-    bucket: "{{ vector_landing_bucket }}"
+    bucket: "{{ llt_landing_bucket }}"
     region: "{{ vector_aws_region }}"
     # Key prefix carries run_id + host_os so analysis can attribute landing
     # objects per run/OS (PLAN §5.1 host_os dimension).
     key_prefix: "landing/{{ run_id }}/{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}/"
-    compression: none      # no compression — PLAN §5.4 lists it as NOT assessed.
+    # no compression — PLAN §5.4 lists it as NOT assessed; also consistent
+    # with TUNING §4.6 item 2's CPU-for-latency rationale (also Vector's
+    # documented default: https://vector.dev/docs/reference/configuration/
+    # sinks/aws_s3/).
+    compression: none
     encoding:
       codec: json
     framing:
       method: newline_delimited
+    # TUNING §4.6 item 3 — in-memory buffer, BLOCK on overflow, sized for
+    # 10k EPS (same rationale/citation as the to_agg_t1 sink above; PLAN
+    # §4.6.3 covers "all internal hops," which includes the agent's egress
+    # sink regardless of which scenario branch is active).
+    buffer:
+      type: memory
+      max_events: {{ vector_buffer_max_events }}
+      when_full: block
     batch:
       # CONTROLLED CONSTANT (PLAN §4.5): identical to Cribl S3 destination.
+      # DO NOT CHANGE — not a §4.6 tuning knob.
       timeout_secs: {{ vector_s3_batch_timeout_secs }}
       max_bytes: {{ vector_s3_batch_max_bytes }}
 {% endif %}

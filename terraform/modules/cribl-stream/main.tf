@@ -74,9 +74,14 @@ resource "aws_instance" "leader" {
   ami                         = data.aws_ssm_parameter.al2023.value
   instance_type               = var.leader_instance_type
   subnet_id                   = var.private_subnet_ids[0]
-  vpc_security_group_ids      = [var.aggregator_sg_id, aws_security_group.leader.id]
   iam_instance_profile        = var.instance_profile_name
   associate_public_ip_address = false
+
+  # Leader SG only: the leader is control plane (4200/9000) and serves neither
+  # data port; attaching the aggregator SG would open 8080/8081 ingress on a
+  # node that never listens there. The 4200 rule keys on the aggregator SG as
+  # SOURCE, which the workers hold — the leader doesn't need it attached.
+  vpc_security_group_ids = [aws_security_group.leader.id]
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -197,6 +202,10 @@ resource "aws_lb_target_group" "t1" {
     interval            = 10
   }
 
+  # PLAN §4.6(6): minimize target deregistration delay (default 300 s) so
+  # detach/reconfigure cycles don't hold stale targets in rotation.
+  deregistration_delay = 30
+
   tags = merge(var.common_tags, {
     Role  = "agg-t1"
     Stack = "cribl"
@@ -250,6 +259,9 @@ resource "aws_lb_target_group" "t2" {
     unhealthy_threshold = 2
     interval            = 10
   }
+
+  # PLAN §4.6(6): minimize target deregistration delay (default 300 s).
+  deregistration_delay = 30
 
   tags = merge(var.common_tags, {
     Role  = "agg-t2"

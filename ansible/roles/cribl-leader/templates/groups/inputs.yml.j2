@@ -1,0 +1,62 @@
+# {{ ansible_managed }}
+# Cribl worker-group inputs — group {{ _group }}, scenario {{ scenario }}.
+# C5: templated and committed/deployed FROM THE LEADER onto
+# groups/{{ _group }}/local/cribl/inputs.yml — NOT templated on the worker
+# itself (leader-managed distributed mode overwrites worker-local writes on
+# the next commit+deploy, so the leader must be the single source of truth).
+# MIRRORS vector-aggregator sources:
+#   t1: HTTP Raw :8080 (+ S3-via-SQS in S3/S4)
+#   t2: HTTP Raw :8081
+inputs:
+{% if _group == 't1' %}
+  http_in:
+    type: http_raw          # Cribl HTTP Raw == Vector http_server (PLAN §4.4)
+    host: 0.0.0.0
+    port: {{ cribl_t1_http_port }}
+    tls:
+      disabled: true         # TLS off on internal hops (PLAN §4.4)
+    # M6: JSON Newline Delimited breaker so events get TOP-LEVEL run_id/seq/
+    # host_id/host_os/t_gen_ns/hop_ts fields (analyze.py reads top-level
+    # fields) — without this, the default breaker leaves the whole line in
+    # _raw and the Eval in pipelines/stamp_agg can't see .hop_ts on the event.
+    breakerRulesets:
+      - "JSON Newline Delimited"
+{% if scenario in ['s3', 's4'] %}
+  s3_in:
+    type: s3                 # S3 source == Vector aws_s3 source
+    region: "{{ cribl_aws_region }}"
+    # Event-driven pickup via SQS (PLAN §4.3), ENABLED ONLY in S3/S4.
+    queueName: "{{ cribl_landing_sqs_url }}"
+    # TUNING §4.6 item 4 — SQS long-poll wait raised to the 20 s ceiling
+    # (cribl_s3_poll_timeout_secs, cribl-leader/defaults/main.yml) — Cribl's
+    # own field is "Poll timeout (secs)": min 1 /
+    # default 10 / max 20 (docs.cribl.io/stream/sources-s3/). 20 is AWS
+    # SQS's own hard max for WaitTimeSeconds, matching PLAN §4.6.4's literal
+    # target value — this minimizes empty-poll round trips, i.e. the
+    # closest available approximation to "event-driven" pickup for a
+    # poll-based consumer. Parity counterpart to Vector's
+    # sqs.poll_secs: 20 (vector-aggregator/templates/vector-agg.yaml.j2).
+    # TODO(verify): could not confirm the exact underlying JSON key name
+    # (UI label "Poll timeout (secs)" only) against the live 4.13
+    # inputs.yml schema for the S3 source type — `pollTimeoutSecs` is a
+    # best-guess camelCase rendering of the UI label; verify against
+    # $CRIBL_HOME/groups/<g>/local/cribl/inputs.yml on a live node and
+    # correct if Cribl rejects/ignores it.
+    pollTimeoutSecs: {{ cribl_s3_poll_timeout_secs }}
+    # M6: landing objects are full JSON NDJSON events — same breaker
+    # requirement as http_in above.
+    breakerRulesets:
+      - "JSON Newline Delimited"
+{% endif %}
+{% else %}
+  http_in:
+    type: http_raw
+    host: 0.0.0.0
+    port: {{ cribl_t2_http_port }}
+    tls:
+      disabled: true
+    # M6: t2 receives the webhook forward from t1, which carries full JSON
+    # events — same breaker requirement as t1's http_in.
+    breakerRulesets:
+      - "JSON Newline Delimited"
+{% endif %}

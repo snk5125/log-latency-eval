@@ -1,0 +1,123 @@
+%%{init: {"flowchart": {"htmlLabels": true, "curve": "linear"}} }%%
+%% docs/diagrams/topology.mermaid
+%% Two-account network topology for the llt (logging latency test) experiment.
+%% Source of truth: PLAN.md §4 (Architecture) and the deployed terraform/ modules.
+%% Every name/port/bucket here MUST match terraform/modules/*; update both together.
+flowchart TB
+
+  subgraph SENDER["SENDER ACCOUNT — region us-east-2 (default, aws_region)"]
+    direction TB
+    subgraph SVPC["VPC llt-sender-vpc — 10.10.0.0/16 — 2 AZs, private subnets only"]
+      direction TB
+
+      subgraph SHOSTS["Generator hosts (m6i.large, no public IP, private subnets)"]
+        direction LR
+        LinVec["llt-lin-vec-01\nAL2023 · Vector agent"]
+        WinVec["llt-win-vec-01\nWS2022 · Vector agent"]
+        LinCe["llt-lin-ce-01\nAL2023 · Cribl Edge"]
+        WinCe["llt-win-ce-01\nWS2022 · Cribl Edge"]
+      end
+
+      SSMEP["SSM interface endpoints\nssm / ssmmessages / ec2messages"]
+      S3GWSender["S3 gateway endpoint\nllt-sender-s3-gw"]
+      VaggEP["Interface endpoint\nllt-sender-vagg-ep\n(PrivateLink consumer, Stack=vector)"]
+      CsEP["Interface endpoint\nllt-sender-cs-ep\n(PrivateLink consumer, Stack=cribl)"]
+
+      SHOSTS -.SSM Session Manager only.-> SSMEP
+      SHOSTS -->|"S3/S4: PutObject\n(landing write)"| S3GWSender
+      SHOSTS -->|"S1/S2: HTTP POST\nNDJSON :8080"| VaggEP
+      SHOSTS -->|"S1/S2: HTTP POST\nNDJSON :8080"| CsEP
+    end
+  end
+
+  subgraph LOGGING["LOGGING ACCOUNT — region us-east-2 (default, aws_region)"]
+    direction TB
+    subgraph LVPC["VPC llt-logging-vpc — 10.20.0.0/16 — 2 AZs, private subnets only"]
+      direction TB
+
+      VectorSvc["VPC endpoint service\nllt-vagg-endpoint-service\n(fronts Vector T1 NLB only)"]
+      CriblSvc["VPC endpoint service\nllt-cs-endpoint-service\n(fronts Cribl T1 NLB only)"]
+
+      subgraph VSTACK["Vector aggregator stack"]
+        direction TB
+        VT1NLB["Internal NLB\nllt-vagg-t1-nlb :8080\ncross-zone ON"]
+        VT1["Tier-1: 2 × m6i.xlarge\n(llt-vagg-t1-0/1)"]
+        VT2NLB["Internal NLB\nllt-vagg-t2-nlb :8081\ncross-zone ON"]
+        VT2["Tier-2: 2 × m6i.xlarge\n(llt-vagg-t2-0/1)"]
+        VT1NLB --> VT1
+        VT1 -->|"HTTP POST NDJSON\n:8081, 1s batch"| VT2NLB
+        VT2NLB --> VT2
+      end
+
+      subgraph CSTACK["Cribl Stream stack"]
+        direction TB
+        Leader["Leader: 1 × m6i.large\nllt-cs-leader\n(control plane :4200 join / :9000 API\nNOT on data path)"]
+        CT1NLB["Internal NLB\nllt-cs-t1-nlb :8080\ncross-zone ON"]
+        CT1["Worker group t1: 2 × m6i.xlarge\n(llt-cs-t1-0/1)"]
+        CT2NLB["Internal NLB\nllt-cs-t2-nlb :8081\ncross-zone ON"]
+        CT2["Worker group t2: 2 × m6i.xlarge\n(llt-cs-t2-0/1)"]
+        Leader -.control plane :4200/:9000.- CT1
+        Leader -.control plane :4200/:9000.- CT2
+        CT1NLB --> CT1
+        CT1 -->|"HTTP POST NDJSON\n:8081, 1s batch"| CT2NLB
+        CT2NLB --> CT2
+      end
+
+      VectorSvc --> VT1NLB
+      CriblSvc --> CT1NLB
+
+      S3GWLogging["S3 gateway endpoint\nllt-logging-s3-gw"]
+
+      subgraph BUCKETS["S3 buckets (SSE-S3, versioning off, 7-day lifecycle)"]
+        direction TB
+        LandingVagg["llt-landing-vagg-&lt;acct&gt;\n(S3/S4 landing, Vector path)"]
+        LandingCs["llt-landing-cs-&lt;acct&gt;\n(S3/S4 landing, Cribl path)"]
+        Final["llt-final-&lt;acct&gt;\nfinal/{run_id}/{host_os}/..."]
+        Artifacts["llt-artifacts-&lt;acct&gt;\n(transfer/harness/manifests\nNOT on measured path)"]
+      end
+
+      subgraph QUEUES["SQS landing queues (event-driven pickup)"]
+        direction TB
+        VaggQ["llt-landing-vagg-q"]
+        CsQ["llt-landing-cs-q"]
+      end
+
+      LandingVagg -->|"S3 event notification\nObjectCreated:*"| VaggQ
+      LandingCs -->|"S3 event notification\nObjectCreated:*"| CsQ
+      VaggQ -.->|"S3 source consumes via SQS\n(event-driven)"| VT1
+      CsQ -.->|"S3 source consumes via SQS\n(event-driven)"| CT1
+
+      VT2 -->|"S3 sink 5s/10MB\nPutObject"| Final
+      CT2 -->|"S3 sink 5s/10MB\nPutObject"| Final
+      VT1 -->|"S3 sink 5s/10MB\nPutObject (S1 only)"| Final
+      CT1 -->|"S3 sink 5s/10MB\nPutObject (S1 only)"| Final
+    end
+  end
+
+  %% Cross-account PrivateLink links (the measured cross-account hop, S1/S2).
+  VaggEP ==>|"PrivateLink\ncross-account boundary"| VectorSvc
+  CsEP ==>|"PrivateLink\ncross-account boundary"| CriblSvc
+
+  %% Cross-account S3 data-plane writes (S3/S4 landing path) — both sender S3
+  %% gateway endpoint and logging landing buckets are cross-account via bucket
+  %% policy (s3:PutObject granted to sender-account generator-host roles).
+  S3GWSender ==>|"cross-account\ns3:PutObject\n(bucket policy)"| LandingVagg
+  S3GWSender ==>|"cross-account\ns3:PutObject\n(bucket policy)"| LandingCs
+
+  classDef account fill:#eef3fb,stroke:#4472c4,stroke-width:2px;
+  classDef vpc fill:#f7f9fc,stroke:#7f9cbf,stroke-width:1.5px;
+  classDef host fill:#fff2cc,stroke:#bf9000,stroke-width:1px;
+  classDef endpoint fill:#e2f0d9,stroke:#548235,stroke-width:1px;
+  classDef nlb fill:#fce4d6,stroke:#c55a11,stroke-width:1px;
+  classDef compute fill:#ddebf7,stroke:#2e75b6,stroke-width:1px;
+  classDef bucket fill:#fbe5d5,stroke:#e36c09,stroke-width:1px;
+  classDef queue fill:#e1d5e7,stroke:#9673a6,stroke-width:1px;
+
+  class SENDER,LOGGING account;
+  class SVPC,LVPC vpc;
+  class LinVec,WinVec,LinCe,WinCe,Leader host;
+  class SSMEP,S3GWSender,VaggEP,CsEP,VectorSvc,CriblSvc,S3GWLogging endpoint;
+  class VT1NLB,VT2NLB,CT1NLB,CT2NLB nlb;
+  class VT1,VT2,CT1,CT2 compute;
+  class LandingVagg,LandingCs,Final,Artifacts bucket;
+  class VaggQ,CsQ queue;

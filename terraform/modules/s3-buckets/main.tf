@@ -196,3 +196,43 @@ resource "aws_s3_bucket_policy" "landing_cs" {
   policy     = data.aws_iam_policy_document.landing_cs_policy.json
   depends_on = [aws_s3_bucket_public_access_block.pab]
 }
+
+# ---------------------------------------------------------------------------
+# Artifacts-bucket policy: cross-account read/write for generator-host roles.
+# WHY: cross-account S3 needs an allow on BOTH sides. The generator-host role
+# (sender account) carries an identity policy for this bucket, but the bucket
+# lives in the logging account — without a bucket policy naming that role,
+# every instance-credential operation (eventgen fetch, per-run manifest
+# upload, aws_ssm file transfer) gets AccessDenied in a two-account deploy.
+# Scoped to object Get/Put + ListBucket, mirroring the identity policy in
+# modules/iam exactly.
+# ---------------------------------------------------------------------------
+data "aws_iam_policy_document" "artifacts_policy" {
+  statement {
+    sid    = "AllowGeneratorHostObjectRW"
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = var.generator_host_role_arns
+    }
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.artifacts.arn}/*"]
+  }
+
+  statement {
+    sid    = "AllowGeneratorHostList"
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = var.generator_host_role_arns
+    }
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.artifacts.arn]
+  }
+}
+
+resource "aws_s3_bucket_policy" "artifacts" {
+  bucket     = aws_s3_bucket.artifacts.id
+  policy     = data.aws_iam_policy_document.artifacts_policy.json
+  depends_on = [aws_s3_bucket_public_access_block.pab]
+}

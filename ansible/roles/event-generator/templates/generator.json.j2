@@ -1,11 +1,12 @@
 {
   "_comment": "{{ ansible_managed }} — llt event generator config (PLAN §5.1).",
   "run_id": "{{ run_id }}",
-  "host_id": "{{ inventory_hostname }}",
+  "host_id": "{{ tags.Name | default(inventory_hostname) }}",
   "host_os": "{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}",
   "eps": {{ eventgen_eps }},
   "event_size_bytes": {{ eventgen_event_size_bytes }},
   "warmup_seconds": {{ eventgen_warmup_seconds }},
-  "output_path": "{{ eventgen_output_win if ansible_os_family == 'Windows' else eventgen_output_linux }}",
+  "duration_seconds": {{ eventgen_duration_seconds }},
+  "output_path": "{{ eventgen_output_win_fwd if ansible_os_family == 'Windows' else eventgen_output_linux }}",
   "_schema_note": "t_gen_ns=CLOCK_REALTIME ns (Linux) / DateTime.UtcNow ticks (Win); hop_ts starts empty {} and each hop appends ms-epoch (PLAN §5.1)."
 }

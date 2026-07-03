@@ -23,3 +23,25 @@ common_linux_packages:
 # behavior, contaminating latency samples (noise control, PLAN §1). We disable
 # for the duration of the experiment; teardown is out of scope for this role.
 common_disable_auto_updates: true
+
+# --- M10: Windows Python + NSSM install ------------------------------------
+# The stock Windows Server 2022 AMI ships with NEITHER — both are fetched over
+# the internet during converge, which is why PLAN §4.2 permits a temporary NAT
+# gateway for package installation (disable it again once site.yml completes).
+# Python: pinned version, official python.org installer (bootstrapper .exe,
+# not a bare MSI — see win_package task for the /quiet argument shape).
+common_win_python_version: "3.12.4"
+common_win_python_installer_url: "https://www.python.org/ftp/python/{{ common_win_python_version }}/python-{{ common_win_python_version }}-amd64.exe"
+# MSI ProductId embedded by the python.org bootstrapper for this release/arch;
+# used by win_package to detect "already installed" without re-running the
+# installer. TODO(verify): confirm this GUID against the actual installed
+# product if win_package's idempotency check ever misfires — the win_stat
+# guard on common_win_python_exe is the primary idempotency gate regardless.
+common_win_python_product_id: "{65DEB1AA-D0CC-4109-9E48-DFAB6E3B4CE1}"
+common_win_python_exe: "C:\\Program Files\\Python312\\python.exe"
+
+# NSSM: pinned version, official nssm.cc download. Extracted (not MSI/exe
+# installed) — nssm.exe is a standalone binary, so we just stage it onto PATH.
+common_win_nssm_version: "nssm-2.24"
+common_win_nssm_download_url: "https://nssm.cc/release/{{ common_win_nssm_version }}.zip"
+common_win_nssm_exe: "C:\\llt\\tools\\nssm.exe"

@@ -121,16 +121,21 @@ resource "aws_lb_target_group" "t1" {
   protocol = "TCP"
   vpc_id   = var.vpc_id
 
-  # HTTP health check against the Vector http source's health path. WHY: pull a
-  # hung Vector node from rotation so it can't silently drop events.
+  # TCP health check on the listener port. WHY: the Vector http_server source
+  # only answers the POST ingest path (no GET /health on 8080), so an HTTP
+  # health check would mark every target unhealthy forever. TCP connect checks
+  # the same thing the Cribl target groups check — parity per PLAN §4.6.
   health_check {
-    protocol            = "HTTP"
+    protocol            = "TCP"
     port                = "traffic-port"
-    path                = "/health"
     healthy_threshold   = 2
     unhealthy_threshold = 2
     interval            = 10
   }
+
+  # PLAN §4.6(6): minimize target deregistration delay (default 300 s) so
+  # detach/reconfigure cycles don't hold stale targets in rotation.
+  deregistration_delay = 30
 
   tags = merge(var.common_tags, {
     Role  = "agg-t1"
@@ -178,14 +183,18 @@ resource "aws_lb_target_group" "t2" {
   protocol = "TCP"
   vpc_id   = var.vpc_id
 
+  # TCP health check — see t1 target group for rationale (no HTTP /health on
+  # the Vector http_server source; parity with the Cribl target groups).
   health_check {
-    protocol            = "HTTP"
+    protocol            = "TCP"
     port                = "traffic-port"
-    path                = "/health"
     healthy_threshold   = 2
     unhealthy_threshold = 2
     interval            = 10
   }
+
+  # PLAN §4.6(6): minimize target deregistration delay (default 300 s).
+  deregistration_delay = 30
 
   tags = merge(var.common_tags, {
     Role  = "agg-t2"

@@ -11,11 +11,24 @@
     - "{{ eventgen_dir_linux }}"
     - "{{ eventgen_dir_linux }}/out"
 
-- name: Fetch eventgen.py from the artifacts bucket (Linux)
+- name: Create a control-node tempfile for the eventgen.py fetch (M11)
+  ansible.builtin.tempfile:
+    state: file
+    suffix: _llt_eventgen.py
+  register: _eventgen_control_tmp
+  delegate_to: localhost
+  # M11 fix: the fetch below must land in CONTROL-NODE scratch, not at
+  # eventgen_bin_linux (/opt/llt/generator/eventgen.py) — that path is the
+  # HOST's install path. Writing it directly via delegate_to: localhost was
+  # writing into (or failing to write into) that literal path ON THE CONTROL
+  # NODE, which is wrong. Mirror the working Windows task pattern (tempfile ->
+  # copy over SSM) instead.
+
+- name: Fetch eventgen.py from the artifacts bucket to a control-node tempfile (Linux)
   amazon.aws.s3_object:
     bucket: "{{ eventgen_s3_uri | regex_replace('^s3://([^/]+)/.*$', '\\1') }}"
     object: "{{ eventgen_s3_uri | regex_replace('^s3://[^/]+/(.*)$', '\\1') }}"
-    dest: "{{ eventgen_bin_linux }}"
+    dest: "{{ _eventgen_control_tmp.path }}"
     mode: get
     region: "{{ llt_aws_region }}"
     profile: "{{ llt_logging_profile | default(omit) }}"
@@ -27,23 +40,30 @@
 
 - name: Stage eventgen.py onto the host (Linux, over SSM)
   ansible.builtin.copy:
-    src: "{{ eventgen_bin_linux }}"    # fetched to control node above
+    src: "{{ _eventgen_control_tmp.path }}"    # fetched to control-node tempfile above
     dest: "{{ eventgen_bin_linux }}"
     mode: "0755"
-  # NOTE: src/dest share the path because the control-node scratch mirrors the
-  # target path; the aws_ssm connection brokers the transfer via the artifacts
-  # bucket (PLAN §4.2).
+  # `copy` (not delegate_to: localhost) — this task runs ON THE HOST over the
+  # aws_ssm connection, which brokers the transfer via the artifacts bucket
+  # (PLAN §4.2), reading from the control-node tempfile and landing at the
+  # HOST's install path.
+
+- name: Remove the control-node tempfile
+  ansible.builtin.file:
+    path: "{{ _eventgen_control_tmp.path }}"
+    state: absent
+  delegate_to: localhost
 
 - name: Install eventgen systemd unit (Linux)
   ansible.builtin.template:
     src: eventgen.service.j2
-    dest: /etc/systemd/system/{{ eventgen_win_service_name }}.service
+    dest: /etc/systemd/system/{{ eventgen_service_name }}.service
     mode: "0644"
   notify: Reload systemd
 
 - name: Ensure eventgen service is STOPPED and DISABLED (orchestrator-controlled)
   ansible.builtin.systemd:
-    name: "{{ eventgen_win_service_name }}"
+    name: "{{ eventgen_service_name }}"
     enabled: false
     state: stopped
     daemon_reload: true

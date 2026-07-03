@@ -16,7 +16,17 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs                  = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+  # Select AZs by ZONE ID, not name — must match sender-network's selection so
+  # both accounts land in the same physical AZ pair (AZ names shuffle per
+  # account; PrivateLink endpoint AZs must align, PLAN §4.6(7)).
+  az_name_by_id = zipmap(
+    data.aws_availability_zones.available.zone_ids,
+    data.aws_availability_zones.available.names,
+  )
+  azs = [
+    for id in slice(sort(data.aws_availability_zones.available.zone_ids), 0, var.az_count) :
+    local.az_name_by_id[id]
+  ]
   private_subnet_cidrs = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, 4, i)]
   public_subnet_cidrs  = [for i in range(var.az_count) : cidrsubnet(var.vpc_cidr, 8, 240 + i)]
 }

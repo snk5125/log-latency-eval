@@ -16,8 +16,15 @@ Properties:
   * Idempotent + resumable via a JSON state file (completed run-IDs skipped).
   * --dry-run prints the full plan and makes NO AWS calls.
   * --only accepts glob filters (e.g. 's2-vec-vagg-5k', 's*-vec-*-10k').
-  * --parallel-stacks runs the Vector-aggregator and Cribl-Stream cells concurrently
-    (they touch disjoint infrastructure — PLAN §8 permits halving wall time).
+  * --parallel-stacks runs two cells concurrently ONLY when they differ in BOTH
+    the agent and the aggregator dimension (disjoint generator hosts AND disjoint
+    aggregator stacks). Two-phase schedule with a hard barrier between phases:
+      phase 1: (vec,vagg) lane  ∥  (ce,cs) lane
+      phase 2: (vec,cs)  lane  ∥  (ce,vagg) lane
+    Cells sharing a generator pair (same agent) or an aggregator stack must NOT
+    run concurrently: configure-scenario re-templates generator.json/agent config
+    on the shared hosts and the shared aggregator tier configs, which would
+    clobber a run in flight.
   * SSM command polling uses bounded exponential backoff.
 
 boto3 is imported lazily inside AWS code paths so this module compiles and --dry-run
@@ -33,6 +40,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 # ---------------------------------------------------------------------------
@@ -112,7 +120,6 @@ def expand_matrix(scen):
             "host_pair": scen["host_pairs"][host_pair_key],
             "aggregator": scen["aggregators"][agg_key],
             "eps": scen["volumes"][volume]["eps"],
-            "agent_config_role": agent_map["config_role"],
             "agent_stack": agent_map["stack"],
             "defaults": scen["defaults"],
             "final_bucket": scen["final_bucket"],
@@ -167,21 +174,37 @@ class Aws(object):
         self.ec2 = self._sender.client("ec2")
 
     def resolve_instance_id(self, host_tag_value):
-        """Resolve an EC2 instance ID from its Name-ish tag (host_id convention §7).
+        """Resolve an EC2 instance ID from its Name tag (host_id convention §7).
 
-        We match on the 'Name' tag equal to host_id and require running state so a
-        half-terminated host does not get selected.
+        Filters: tag:Name == host_id AND tag:Project=llt AND tag:Role=generator
+        AND state=running, so a similarly named instance from another project (or
+        a half-terminated host) can never be selected. Exactly ONE instance must
+        match — SSM commands sent to an arbitrary pick would corrupt the run, so
+        ambiguity is a hard error, never a silent first-match.
         """
         resp = self.ec2.describe_instances(
             Filters=[
                 {"Name": "tag:Name", "Values": [host_tag_value]},
+                {"Name": "tag:Project", "Values": ["llt"]},
+                {"Name": "tag:Role", "Values": ["generator"]},
                 {"Name": "instance-state-name", "Values": ["running"]},
             ]
         )
-        for res in resp.get("Reservations", []):
-            for inst in res.get("Instances", []):
-                return inst["InstanceId"]
-        raise RuntimeError("no running instance with Name tag %r" % host_tag_value)
+        matches = [
+            inst["InstanceId"]
+            for res in resp.get("Reservations", [])
+            for inst in res.get("Instances", [])
+        ]
+        if not matches:
+            raise RuntimeError(
+                "no running instance with tag:Name=%r (and Project=llt, "
+                "Role=generator)" % host_tag_value)
+        if len(matches) > 1:
+            raise RuntimeError(
+                "ambiguous host %r: %d running instances match "
+                "(Project=llt, Role=generator): %s — refusing to pick one"
+                % (host_tag_value, len(matches), ", ".join(sorted(matches))))
+        return matches[0]
 
     def send_command(self, instance_id, document_name, parameters, comment):
         """Issue an SSM SendCommand; return the command ID."""
@@ -261,30 +284,30 @@ def execute_cell(cell, aws, args, acct_logging):
     print("\n=== CELL %s -> run_id %s ===" % (cell.run_id_prefix, run_id))
 
     # Resolve concrete bucket names with the logging account suffix (PLAN §4.3).
+    # These are for run_matrix's OWN S3 work (manifest collection, evidence
+    # upload) and the run manifest — they are NOT passed to Ansible: the ansible
+    # side selects landing bucket/endpoint per cell from generated_infra.yml,
+    # keyed on the `aggregator` var.
     landing_bucket = "%s-%s" % (cell.spec["aggregator"]["landing_bucket"], acct_logging)
     final_bucket = "%s-%s" % (cell.spec["final_bucket"], acct_logging)
     artifacts_bucket = "%s-%s" % (cell.spec["artifacts_bucket"], acct_logging)
 
-    # --- Extra-vars shared by the Ansible phases ---------------------------------
+    # --- Extra-vars for configure-scenario.yml ------------------------------------
+    # Contract with the ansible side (highest-precedence extra-vars):
+    #   run_id/scenario/agent/aggregator/volume — cell identity (validated by the
+    #     playbook, used to select which stack to re-template).
+    #   eventgen_* — consumed by the event-generator role's generator.json.j2
+    #     (the single generator param contract; the service reads
+    #     `eventgen.py --config .../generator.json`).
     common_vars = {
         "run_id": run_id,
         "scenario": cell.scenario,
         "agent": cell.agent,
         "aggregator": cell.aggregator,
         "volume": cell.volume,
-        "eps": cell.spec["eps"],
-        "agent_config_role": cell.spec["agent_config_role"],
-        "landing_bucket": landing_bucket,
-        "final_bucket": final_bucket,
-        "artifacts_bucket": artifacts_bucket,
-        "scenario_def": cell.spec["scenario_def"],
-        "batch": {
-            "s3_timeout_secs": d["s3_batch_timeout_secs"],
-            "s3_max_bytes": d["s3_batch_max_bytes"],
-            "http_timeout_secs": d["http_batch_timeout_secs"],
-        },
-        "tier1_port": d["tier1_port"],
-        "tier2_port": d["tier2_port"],
+        "eventgen_eps": cell.spec["eps"],
+        "eventgen_warmup_seconds": d["warmup_secs"],
+        "eventgen_duration_seconds": d["measurement_secs"],
     }
 
     # --- Phase 1: render scenario config -----------------------------------------
@@ -298,15 +321,10 @@ def execute_cell(cell, aws, args, acct_logging):
         raise RuntimeError("clock assertion FAILED for %s — aborting cell" % run_id)
 
     # --- Phase 3: start generators on both hosts via SSM -------------------------
+    # Run params were already written to generator.json by configure-scenario
+    # (phase 1) — the start command only starts the service.
     print("  [3/6] start generators (linux + windows)")
-    gen_params = {
-        "run_id": run_id,
-        "eps": cell.spec["eps"],
-        "warmup_secs": d["warmup_secs"],
-        "measurement_secs": d["measurement_secs"],
-        "artifacts_bucket": artifacts_bucket,
-    }
-    started = _start_generators(cell, aws, gen_params, args.dry_run)
+    started = _start_generators(cell, aws, run_id, args.dry_run)
 
     # --- Phase 4: wait warmup + measurement + drain ------------------------------
     total_wait = d["warmup_secs"] + d["measurement_secs"] + args.drain_secs
@@ -338,7 +356,14 @@ def execute_cell(cell, aws, args, acct_logging):
         "artifacts_bucket": artifacts_bucket,
         "hosts": cell.spec["host_pair"],
         "scenario_topology": cell.spec["scenario_def"],
-        "batch_constants": common_vars["batch"],
+        # Methodology constants (PLAN §4.5) recorded as run evidence. The values
+        # live in scenarios.yaml defaults and are mirrored by the Ansible role
+        # defaults — they are constants, not per-run extra-vars.
+        "batch_constants": {
+            "s3_timeout_secs": d["s3_batch_timeout_secs"],
+            "s3_max_bytes": d["s3_batch_max_bytes"],
+            "http_timeout_secs": d["http_batch_timeout_secs"],
+        },
         "timing": {
             "warmup_secs": d["warmup_secs"],
             "measurement_secs": d["measurement_secs"],
@@ -352,32 +377,31 @@ def execute_cell(cell, aws, args, acct_logging):
     return run_manifest
 
 
-def _start_generators(cell, aws, gen_params, dry_run):
+def _start_generators(cell, aws, run_id, dry_run):
     """Start the generator on both hosts of the pair via SSM. Returns per-host info.
 
-    SSM documents (provisioned by Ansible, PLAN §6):
-      * Linux hosts run an AWS-RunShellScript equivalent that `systemctl start`s the
-        llt-eventgen@<run_id> unit with the run params exported.
-      * Windows hosts run AWS-RunPowerShellScript to start the llt-eventgen service.
-    The document names below are conventions the Ansible role installs; run_matrix
-    passes only parameters, keeping OS-specific logic in the SSM documents / units.
+    The ONLY run-parameter contract is generator.json, re-templated per cell by
+    configure-scenario.yml (phase 1). The systemd unit / NSSM service invokes
+    `eventgen.py --config .../generator.json`, so the start command here does
+    nothing but start the service — no env files, no exported variables.
+
+    A Failed/TimedOut start is a hard error: continuing would produce a
+    "completed" cell with zero data, which is worse than an aborted one.
     """
     started = {}
     for os_name, host_id in cell.spec["host_pair"].items():
-        # Choose the SSM document per OS. These are AWS-managed run-command docs;
-        # the actual start command is passed as a parameter so we stay generic.
+        # AWS-managed run-command docs; the start command is OS-specific.
         if os_name == "linux":
             document = "AWS-RunShellScript"
-            start_cmd = _linux_start_command(gen_params, host_id, os_name)
-            parameters = {"commands": [start_cmd]}
+            start_cmd = "sudo systemctl start llt-eventgen.service"
         else:
             document = "AWS-RunPowerShellScript"
-            start_cmd = _windows_start_command(gen_params, host_id, os_name)
-            parameters = {"commands": [start_cmd]}
+            start_cmd = "Start-Service -Name 'llt-eventgen'"
+        parameters = {"commands": [start_cmd]}
 
         if dry_run:
-            print("    [dry-run] would SSM-start %s (%s) doc=%s"
-                  % (host_id, os_name, document))
+            print("    [dry-run] would SSM-start %s (%s) doc=%s cmd=%r"
+                  % (host_id, os_name, document, start_cmd))
             started[os_name] = {"host_id": host_id, "instance_id": None,
                                 "command_id": None}
             continue
@@ -385,89 +409,81 @@ def _start_generators(cell, aws, gen_params, dry_run):
         instance_id = aws.resolve_instance_id(host_id)
         command_id = aws.send_command(
             instance_id, document, parameters,
-            comment="llt start gen %s %s" % (gen_params["run_id"], os_name),
+            comment="llt start gen %s %s" % (run_id, os_name),
         )
         # Wait for the *start* command to return (fast; it launches a background
-        # service/unit and exits — it does NOT block for the run duration).
-        aws.wait_command(command_id, instance_id, timeout_s=300)
+        # service/unit and exits — it does NOT block for the run duration) and
+        # REQUIRE Success: a failed start means no generator, hence no data.
+        inv = aws.wait_command(command_id, instance_id, timeout_s=300)
+        if inv["Status"] != "Success":
+            raise RuntimeError(
+                "generator start FAILED on %s (%s): SSM status=%s stderr=%r"
+                % (host_id, os_name, inv["Status"],
+                   (inv.get("StandardErrorContent") or "")[:400]))
         started[os_name] = {"host_id": host_id, "instance_id": instance_id,
                             "command_id": command_id}
         print("    started %s (%s) instance=%s" % (host_id, os_name, instance_id))
     return started
 
 
-def _linux_start_command(p, host_id, os_name):
-    """Build the Linux generator start command (backgrounded systemd unit start).
-
-    The unit file (installed by the event-generator Ansible role) reads run params
-    from an EnvironmentFile the SSM command writes, then launches eventgen.py.
-    """
-    env = (
-        "RUN_ID=%s\\n"
-        "EPS=%s\\n"
-        "WARMUP=%s\\n"
-        "DURATION=%s\\n"
-        "HOST_ID=%s\\n"
-        "HOST_OS=%s\\n"
-        "ARTIFACTS_BUCKET=%s\\n"
-    ) % (
-        p["run_id"], p["eps"], p["warmup_secs"], p["measurement_secs"],
-        host_id, os_name, p["artifacts_bucket"],
-    )
-    # Write env file, (re)start the templated unit keyed by run_id.
-    return (
-        "set -e; "
-        "sudo mkdir -p /etc/llt; "
-        "printf '%s' | sudo tee /etc/llt/run.env >/dev/null; "
-        "sudo systemctl start llt-eventgen.service"
-    ) % env
-
-
-def _windows_start_command(p, host_id, os_name):
-    """Build the Windows generator start command (start the llt-eventgen service)."""
-    return (
-        "$env:LLT_RUN_ID='%s'; "
-        "New-Item -ItemType Directory -Force -Path C:\\llt | Out-Null; "
-        "Set-Content -Path C:\\llt\\run.env -Value @("
-        "'RUN_ID=%s','EPS=%s','WARMUP=%s','DURATION=%s',"
-        "'HOST_ID=%s','HOST_OS=%s','ARTIFACTS_BUCKET=%s'); "
-        "Start-Service -Name 'llt-eventgen'"
-    ) % (
-        p["run_id"], p["run_id"], p["eps"], p["warmup_secs"], p["measurement_secs"],
-        host_id, os_name, p["artifacts_bucket"],
-    )
+# Local generator manifest paths (event-generator role defaults: output_path +
+# ".manifest.json" — see ansible/roles/event-generator/defaults/main.yml).
+_LINUX_MANIFEST_PATH = "/opt/llt/generator/out/events.ndjson.manifest.json"
+_WIN_MANIFEST_PATH = r"C:\llt\generator\out\events.ndjson.manifest.json"
 
 
 def _stop_and_collect(cell, aws, run_id, artifacts_bucket, started, dry_run):
-    """Stop generators (defensive; they self-terminate after duration) and pull the
-    per-host generator manifests from the artifacts bucket.
+    """Stop generators (defensive; they self-terminate after duration), upload the
+    local generator manifest from each host, and pull the manifests back down.
 
-    The generator writes <out>.manifest.json locally; the Ansible unit uploads it to
-    s3://<artifacts_bucket>/gen-manifests/{run_id}/{host_os}.manifest.json on exit.
-    We download those here for inclusion in the run manifest.
+    The generator writes <output_path>.manifest.json locally (including on
+    SIGTERM early-stop). The manifest carries the sent-event counts that are the
+    LOSS-RATE denominator (PLAN §5.2 — a §5.2 deliverable), so this step uploads
+    it to s3://<artifacts_bucket>/gen-manifests/{run_id}/{host_os}.manifest.json
+    via the same SSM command that stops the service:
+      * Linux: awscli v2 ships on AL2023 -> `aws s3 cp`.
+      * Windows: AWS Tools for PowerShell ship on Amazon WS2022 AMIs ->
+        `Write-S3Object`.
+    Stop/upload failures are warnings, not aborts — the fetch below already
+    tolerates absence and records the error in the run manifest.
     """
     manifests = {}
     for os_name, info in started.items():
         host_id = info["host_id"]
-        # Best-effort stop (idempotent — service may already have exited).
+        key = "gen-manifests/%s/%s.manifest.json" % (run_id, os_name)
+        # Best-effort stop (idempotent — service may already have exited), then
+        # upload the local manifest in the same SSM command.
         if not dry_run and info["instance_id"]:
             try:
                 if os_name == "linux":
-                    stop_cmd = "sudo systemctl stop llt-eventgen.service || true"
                     doc = "AWS-RunShellScript"
+                    commands = [
+                        "sudo systemctl stop llt-eventgen.service || true",
+                        "aws s3 cp %s s3://%s/%s"
+                        % (_LINUX_MANIFEST_PATH, artifacts_bucket, key),
+                    ]
                 else:
-                    stop_cmd = "Stop-Service -Name 'llt-eventgen' -ErrorAction SilentlyContinue"
                     doc = "AWS-RunPowerShellScript"
+                    commands = [
+                        "Stop-Service -Name 'llt-eventgen' -ErrorAction SilentlyContinue",
+                        "Write-S3Object -BucketName %s -Key %s -File %s"
+                        % (artifacts_bucket, key, _WIN_MANIFEST_PATH),
+                    ]
                 cid = aws.send_command(info["instance_id"], doc,
-                                       {"commands": [stop_cmd]},
+                                       {"commands": commands},
                                        comment="llt stop gen %s" % run_id)
-                aws.wait_command(cid, info["instance_id"], timeout_s=180)
+                inv = aws.wait_command(cid, info["instance_id"], timeout_s=180)
+                if inv["Status"] != "Success":
+                    print("    warn: stop/manifest-upload on %s status=%s stderr=%r"
+                          % (host_id, inv["Status"],
+                             (inv.get("StandardErrorContent") or "")[:400]))
             except Exception as exc:  # non-fatal — record and continue
-                print("    warn: stop on %s failed: %s" % (host_id, exc))
+                print("    warn: stop/manifest-upload on %s failed: %s"
+                      % (host_id, exc))
 
-        key = "gen-manifests/%s/%s.manifest.json" % (run_id, os_name)
         if dry_run:
-            print("    [dry-run] would fetch s3://%s/%s" % (artifacts_bucket, key))
+            print("    [dry-run] would SSM stop %s + upload manifest, then fetch "
+                  "s3://%s/%s" % (host_id, artifacts_bucket, key))
             manifests[os_name] = {"s3_key": key, "fetched": False}
             continue
         dest = os.path.join(EVIDENCE_DIR, run_id, "%s.manifest.json" % os_name)
@@ -505,41 +521,102 @@ def _write_run_manifest(aws, run_manifest, artifacts_bucket, dry_run):
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
-def run_all(cells, aws, args, acct_logging, state, state_path):
-    """Execute cells serially, or split by stack for --parallel-stacks."""
-    if args.parallel_stacks and not args.dry_run:
-        # Partition into two disjoint queues by aggregator stack; run concurrently.
-        vector_cells = [c for c in cells if c.stack == "vector"]
-        cribl_cells = [c for c in cells if c.stack == "cribl"]
-        print("parallel-stacks: %d vector cells | %d cribl cells"
-              % (len(vector_cells), len(cribl_cells)))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            futs = [
-                ex.submit(_run_serial, vector_cells, aws, args, acct_logging,
-                          state, state_path, "vector"),
-                ex.submit(_run_serial, cribl_cells, aws, args, acct_logging,
-                          state, state_path, "cribl"),
-            ]
-            for f in concurrent.futures.as_completed(futs):
-                f.result()  # re-raise any worker exception
-    else:
-        _run_serial(cells, aws, args, acct_logging, state, state_path, "all")
+# Concurrency-safety rule for --parallel-stacks (see module docstring): two
+# cells may run at the same time IFF they differ in BOTH agent AND aggregator.
+#   * same agent  -> same generator host pair -> configure-scenario would
+#     re-template generator.json/agent config under a live run;
+#   * same aggregator -> same aggregator stack -> re-templating tier configs
+#     restarts services carrying the other cell's traffic.
+# The 2x2 agent x aggregator space therefore yields exactly two phases of two
+# concurrency-compatible classes each, with a hard barrier between phases:
+_PARALLEL_PHASES = [
+    ((("vec", "vagg")), (("ce", "cs"))),   # phase 1: disjoint in agent AND agg
+    ((("vec", "cs")), (("ce", "vagg"))),   # phase 2: the cross pairings
+]
 
 
-def _run_serial(cells, aws, args, acct_logging, state, state_path, label):
+def _partition_two_phase(cells):
+    """Split cells into the two-phase / two-lane schedule.
+
+    Returns (phases, leftover) where phases is a list of (lane1_cells,
+    lane2_cells) tuples. Order WITHIN a lane preserves the input cell order
+    (scenario-major, then volume — the expand_matrix product order). leftover
+    holds any cell with unrecognized tokens (defensive; run serially at the end
+    rather than guessing what it may conflict with).
+    """
+    by_class = {}
+    leftover = []
+    known = {cls for phase in _PARALLEL_PHASES for cls in phase}
     for cell in cells:
-        if cell.run_id_prefix in state["completed"] and not args.rerun:
+        key = (cell.agent, cell.aggregator)
+        if key in known:
+            by_class.setdefault(key, []).append(cell)
+        else:
+            leftover.append(cell)
+    phases = [
+        (by_class.get(lane1, []), by_class.get(lane2, []))
+        for lane1, lane2 in _PARALLEL_PHASES
+    ]
+    return phases, leftover
+
+
+def run_all(cells, aws, args, acct_logging, state, state_path):
+    """Execute cells serially, or via the two-phase parallel schedule."""
+    # One lock serializes all state mutation + persistence across lanes: both
+    # lanes share the `state` dict, and unsynchronized update+save would race
+    # (dict-changed-during-iteration in json.dump / clobbered .tmp file).
+    state_lock = threading.Lock()
+    if args.parallel_stacks:
+        phases, leftover = _partition_two_phase(cells)
+        for phase_no, (lane1, lane2) in enumerate(phases, start=1):
+            print("\n--- parallel phase %d/%d: lane1=%d cell(s) %s | "
+                  "lane2=%d cell(s) %s ---"
+                  % (phase_no, len(phases),
+                     len(lane1), "(%s-%s)" % _PARALLEL_PHASES[phase_no - 1][0],
+                     len(lane2), "(%s-%s)" % _PARALLEL_PHASES[phase_no - 1][1]))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+                futs = []
+                if lane1:
+                    futs.append(ex.submit(
+                        _run_serial, lane1, aws, args, acct_logging,
+                        state, state_path, "p%d-lane1" % phase_no, state_lock))
+                if lane2:
+                    futs.append(ex.submit(
+                        _run_serial, lane2, aws, args, acct_logging,
+                        state, state_path, "p%d-lane2" % phase_no, state_lock))
+                for f in concurrent.futures.as_completed(futs):
+                    f.result()  # re-raise any worker exception
+            # HARD BARRIER: the `with` block joins both lanes before the next
+            # phase starts — phase-2 classes share hosts/stacks with phase 1.
+        if leftover:
+            print("\n--- %d cell(s) with unrecognized agent/aggregator tokens: "
+                  "running serially ---" % len(leftover))
+            _run_serial(leftover, aws, args, acct_logging, state, state_path,
+                        "leftover", state_lock)
+    else:
+        _run_serial(cells, aws, args, acct_logging, state, state_path, "all",
+                    state_lock)
+
+
+def _run_serial(cells, aws, args, acct_logging, state, state_path, label,
+                state_lock):
+    for cell in cells:
+        # Completed-cell skip applies to live runs only: dry-run always shows the
+        # full plan (deterministic 48-cell output regardless of any state file).
+        if (not args.dry_run and cell.run_id_prefix in state["completed"]
+                and not args.rerun):
             print("[%s] SKIP %s (already completed; --rerun to force)"
                   % (label, cell.run_id_prefix))
             continue
         try:
             manifest = execute_cell(cell, aws, args, acct_logging)
-            state["completed"][cell.run_id_prefix] = {
-                "run_id": manifest["run_id"],
-                "at": manifest["started_at_utc"],
-            }
             if not args.dry_run:
-                save_state(state_path, state)
+                with state_lock:
+                    state["completed"][cell.run_id_prefix] = {
+                        "run_id": manifest["run_id"],
+                        "at": manifest["started_at_utc"],
+                    }
+                    save_state(state_path, state)
         except Exception as exc:
             print("[%s] CELL FAILED %s: %s" % (label, cell.run_id_prefix, exc))
             if args.stop_on_error:

@@ -1,0 +1,42 @@
+%%{init: {"flowchart": {"htmlLabels": true, "curve": "linear"}} }%%
+%% docs/diagrams/measurement.mermaid
+%% Visual form of PLAN.md §5.2 (per-hop latency derivation) across all four
+%% scenarios, plus the §5.4 item 1 batch-adjustment note. Not a network diagram —
+%% this shows how each reported delta is COMPUTED from captured timestamps.
+flowchart LR
+
+  TGEN(["t_gen_ns\n(generator, ns,\nCLOCK_REALTIME / DateTime.UtcNow)"])
+  AGENT(["hop_ts.agent\n(agent, ms,\ncaptured before ANY egress)"])
+  LANDPUT(["landing PutObject\n(S3/S4 only, sub-s,\nx-amz-meta-llt-put-ms preferred /\nLastModified fallback — operative)"])
+  AGG1(["hop_ts.agg1\n(Aggregator T1, ms)"])
+  AGG2(["hop_ts.agg2\n(Aggregator T2, ms,\nS2/S4 only)"])
+  FINALPUT(["final PutObject\n(sub-s,\nx-amz-meta-llt-put-ms preferred /\nLastModified fallback — operative)"])
+
+  TGEN -->|"gen→agent =\nhop_ts.agent − t_gen"| AGENT
+
+  AGENT -->|"agent→T1 (S1/S2) =\nhop_ts.agg1 − hop_ts.agent"| AGG1
+  AGENT -->|"agent→landing (S3/S4) =\nlandingPut − hop_ts.agent"| LANDPUT
+  LANDPUT -->|"landing→agg (S3/S4) =\nhop_ts.agg1 − landingPut"| AGG1
+
+  AGG1 -->|"T1→T2 (S2/S4) =\nhop_ts.agg2 − hop_ts.agg1"| AGG2
+
+  AGG1 -->|"last-agg→final (S1/S3) =\nfinalPut − hop_ts.agg1"| FINALPUT
+  AGG2 -->|"last-agg→final (S2/S4) =\nfinalPut − hop_ts.agg2"| FINALPUT
+
+  TGEN -.->|"e2e =\nfinalPut − t_gen"| FINALPUT
+
+  subgraph BATCH["Batch-adjustment note (PLAN §5.4 item 1 / §5A)"]
+    direction TB
+    RAW["Raw hop delta:\nas computed above,\nincludes S3 sink flush window"]
+    ADJ["Batch-adjusted hop delta:\nsubtract 5s from every →S3 hop\n(landing PutObject and final PutObject)"]
+    ADJE2E["Batch-adjusted e2e:\nsubtract 5s × N(→S3 hops in path)\nS1/S2: N=1 (final only)\nS3/S4: N=2 (landing + final)"]
+    RAW -->|"−5s per →S3 hop"| ADJ
+    ADJ --> ADJE2E
+  end
+
+  FINALPUT -.->|"both raw AND\nbatch-adjusted reported"| BATCH
+
+  classDef ts fill:#ddebf7,stroke:#2e75b6,stroke-width:1px;
+  classDef batch fill:#fff2cc,stroke:#bf9000,stroke-width:1.5px;
+  class TGEN,AGENT,LANDPUT,AGG1,AGG2,FINALPUT ts;
+  class RAW,ADJ,ADJE2E batch;

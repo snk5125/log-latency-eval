@@ -26,3 +26,73 @@
   changed_when: false
   # The generator (eventgen.py) is Python, but service wrapping and time-sync
   # use PowerShell; confirm the shell the aws_ssm connection targets is healthy.
+
+# --- M10: stock Windows Server 2022 AMI has NEITHER Python NOR NSSM ---------
+# (event-generator/tasks/windows.yml previously assumed "Python installed at
+# image-build time" — that was never true for the stock WS2022 AMI this
+# experiment provisions; PLAN §4.2 allows a NAT gateway during converge
+# specifically for package installation, which is what these two downloads
+# use). Both installs are idempotent (guarded by win_stat/creates) so
+# re-running site.yml mid-matrix is a no-op once installed.
+- name: Check whether Python is already installed (idempotency guard)
+  ansible.windows.win_stat:
+    path: "{{ common_win_python_exe }}"
+  register: common_win_python_stat
+
+- name: Download the Python 3 installer (Windows, M10)
+  ansible.windows.win_get_url:
+    url: "{{ common_win_python_installer_url }}"
+    dest: "C:\\llt\\python-installer.exe"
+  when: not common_win_python_stat.stat.exists
+
+- name: Silently install Python 3 with AddToPath (Windows, M10)
+  ansible.windows.win_package:
+    path: "C:\\llt\\python-installer.exe"
+    arguments: "/quiet InstallAllUsers=1 PrependPath=1 Include_launcher=0"
+    product_id: "{{ common_win_python_product_id }}"
+    state: present
+  when: not common_win_python_stat.stat.exists
+  # python.org's official installer is a bootstrapper (not a bare MSI), so
+  # win_package needs the silent /quiet CLI switches rather than MSI
+  # properties alone; PrependPath=1 does the PATH work win_path would
+  # otherwise need to do for python.exe itself.
+
+- name: Check whether NSSM is already staged (idempotency guard)
+  ansible.windows.win_stat:
+    path: "{{ common_win_nssm_exe }}"
+  register: common_win_nssm_stat
+
+- name: Download the NSSM zip (Windows, M10)
+  ansible.windows.win_get_url:
+    url: "{{ common_win_nssm_download_url }}"
+    dest: "C:\\llt\\nssm.zip"
+  when: not common_win_nssm_stat.stat.exists
+
+- name: Extract NSSM to C:\llt\tools (Windows, M10)
+  community.windows.win_unzip:
+    src: "C:\\llt\\nssm.zip"
+    dest: "C:\\llt\\nssm-staging"
+  when: not common_win_nssm_stat.stat.exists
+  # NSSM's zip nests win64/nssm.exe under a version-named top dir; copy just
+  # the 64-bit binary up to a stable, version-independent path (next task) so
+  # every role that shells out to NSSM (vector-agent) has one fixed location.
+
+- name: Ensure the NSSM tools directory exists
+  ansible.windows.win_file:
+    path: C:\llt\tools
+    state: directory
+
+- name: Copy the 64-bit nssm.exe to the stable tools path (Windows, M10)
+  ansible.windows.win_shell: >-
+    Copy-Item -Path "C:\llt\nssm-staging\{{ common_win_nssm_version }}\win64\nssm.exe"
+    -Destination "{{ common_win_nssm_exe }}" -Force
+  args:
+    creates: "{{ common_win_nssm_exe }}"
+  when: not common_win_nssm_stat.stat.exists
+
+- name: Add C:\llt\tools to the system PATH (Windows, M10)
+  ansible.windows.win_path:
+    elements: "C:\\llt\\tools"
+    state: present
+  # community.windows.win_nssm shells out to `nssm.exe` by bare name in some
+  # code paths; having it on PATH avoids every caller needing the full path.

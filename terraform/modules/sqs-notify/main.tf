@@ -12,8 +12,9 @@
 #   Each queue has:
 #     - a DLQ (redrive after maxReceiveCount) so a poison object can't wedge the
 #       source and silently drop events (which would corrupt loss-rate stats);
-#     - visibility timeout 300s (PLAN spec) — long enough for the aggregator to
-#       fetch+process a landing object before the message reappears;
+#     - visibility timeout 300s (engineering choice, not PLAN-mandated) — long
+#       enough for the aggregator to fetch+process a landing object before the
+#       message reappears;
 #     - a queue policy allowing S3 (from the specific bucket ARN) to SendMessage.
 ########################################################################
 
@@ -40,11 +41,12 @@ resource "aws_sqs_queue" "cs_dlq" {
 
 # ---------------------------------------------------------------------------
 # Main landing queues (one per aggregator technology).
-# visibility_timeout_seconds = 300 per PLAN; redrive to the DLQ after 5 tries.
+# visibility_timeout_seconds = 300 (engineering choice); redrive to the DLQ
+# after 5 tries.
 # ---------------------------------------------------------------------------
 resource "aws_sqs_queue" "vagg" {
   name                       = "${var.name_prefix}-landing-vagg-q"
-  visibility_timeout_seconds = 300 # PLAN spec: give the Vector source time to fetch+process
+  visibility_timeout_seconds = 300 # give the Vector source time to fetch+process before redelivery
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.vagg_dlq.arn

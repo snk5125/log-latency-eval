@@ -25,8 +25,17 @@
     enabled: true
     state: started
 
+- name: Flush handlers so chronyd is running the new chrony.conf before stepping (m4)
+  ansible.builtin.meta: flush_handlers
+  # m4 fix: `chronyc makestep` below must act against the RESTARTED chronyd
+  # (new chrony.conf, AWS-Time-Sync-only source) — without this flush it would
+  # race the "Restart chronyd" handler (notified above but not yet run) and
+  # could step against the old config/source.
+
 - name: Force an immediate step so sync is tight before any run
   ansible.builtin.command: chronyc makestep
-  changed_when: false
+  changed_when: true
   # Step (not slew) the clock now so the very first run's assertion (< 1 ms,
-  # PLAN §5.3) is not gated on slow slew convergence.
+  # PLAN §5.3) is not gated on slow slew convergence. changed_when: true (not
+  # false) — makestep always performs a clock-mutating action; marking it
+  # unconditionally "unchanged" mischaracterized what this command does.

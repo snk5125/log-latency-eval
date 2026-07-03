@@ -13,6 +13,15 @@ RestartSec=2
 Environment=VECTOR_LOG=warn
 # Aggregators must self-heal transient blips; Restart=always is safe (stateless
 # forwarding + timestamping only, PLAN §5.1).
+#
+# TUNING §4.6 item 5 (process/thread scaling) — RECORD ONLY, no change: no
+# --threads flag / VECTOR_THREADS env var is set here, so Vector runs at its
+# documented default of "the number of available cores" on this m6i.xlarge
+# (4 vCPU) aggregator node. This is Vector's maximal parallelism setting
+# already; there is no further "floor" to tune toward. Recorded per PLAN
+# §4.6.5 ("Vector defaults to all cores — record both [Cribl and Vector]").
+# Vendor doc: https://vector.dev/docs/reference/cli/ (--threads/-t, "The
+# default is the number of available cores").
 
 [Install]
 WantedBy=multi-user.target

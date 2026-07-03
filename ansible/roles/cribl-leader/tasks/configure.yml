@@ -1,0 +1,122 @@
+# =============================================================================
+# roles/cribl-leader/tasks/configure.yml — group data-plane config + commit/deploy
+# =============================================================================
+# C5: workers are leader-managed in distributed mode — a worker's own
+# groups/<g>/local/cribl/ tree is overwritten the next time the leader
+# commits+deploys that group, so ALL data-plane config (inputs/outputs/
+# pipelines/route for t1 and t2) is templated HERE, on the leader, under
+# $CRIBL_HOME/groups/<g>/local/cribl/, then pushed to the running workers via
+# the leader's REST API (commit, then deploy, per group).
+#
+# Called at install time (tasks/main.yml) AND standalone per-run by
+# configure-scenario.yml's Cribl aggregator branch (retargeted to the leader
+# per C5 — it no longer re-templates cribl-worker directly).
+#
+# [VERIFY-ONLINE] endpoint shapes below are sourced from the official Cribl
+# docs (checked against the 4.13 doc set; endpoints are stable since at least
+# the 4.x REST API and not called out as changed for 4.13):
+#   - Commit/Deploy workflow: https://docs.cribl.io/cribl-as-code/commit-deploy/
+#   - Auth (on-prem):         https://docs.cribl.io/cribl-as-code/api-auth
+# ---------------------------------------------------------------------------
+---
+- name: Set the group config dir for this iteration
+  ansible.builtin.set_fact:
+    _cribl_group_dir: "{{ cribl_home }}/groups/{{ _group }}/local/cribl"
+
+- name: Ensure the group's config + pipeline dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ _cribl_group_dir }}"
+    - "{{ _cribl_group_dir }}/pipelines"
+    - "{{ _cribl_group_dir }}/pipelines/stamp_agg"
+
+- name: Template group inputs.yml (HTTP Raw + S3-via-SQS source)
+  ansible.builtin.template:
+    src: groups/inputs.yml.j2
+    dest: "{{ _cribl_group_dir }}/inputs.yml"
+    mode: "0644"
+  vars:
+    _group: "{{ _group }}"
+
+- name: Template group outputs.yml (S3 dest + Webhook t1->t2)
+  ansible.builtin.template:
+    src: groups/outputs.yml.j2
+    dest: "{{ _cribl_group_dir }}/outputs.yml"
+    mode: "0644"
+  vars:
+    _group: "{{ _group }}"
+
+- name: Template group stamp_agg pipeline conf (Eval adds hop_ts.agg1/agg2)
+  ansible.builtin.template:
+    src: groups/pipeline_conf.yml.j2
+    dest: "{{ _cribl_group_dir }}/pipelines/stamp_agg/conf.yml"
+    mode: "0644"
+  vars:
+    _group: "{{ _group }}"
+
+- name: Template group route.yml
+  ansible.builtin.template:
+    src: groups/route.yml.j2
+    dest: "{{ _cribl_group_dir }}/pipelines/route.yml"
+    mode: "0644"
+  vars:
+    _group: "{{ _group }}"
+
+# --- Commit + deploy this group via the leader's REST API -------------------
+# The admin password is generated on-node by tasks/main.yml's bootstrap block
+# (M12) and never leaves the host through Ansible except into this in-memory
+# fact, which is no_log'd throughout.
+- name: Read back the node-local generated admin password for API auth
+  ansible.builtin.slurp:
+    src: "{{ cribl_admin_password_file }}"
+  register: _cribl_admin_pw_slurp
+  no_log: true
+
+- name: Log in to the leader's REST API for a bearer token
+  ansible.builtin.uri:
+    url: "https://{{ cribl_leader_private_ip }}:{{ cribl_api_port }}/api/v1/auth/login"
+    method: POST
+    body_format: json
+    body:
+      username: admin
+      password: "{{ (_cribl_admin_pw_slurp.content | b64decode).strip() }}"
+    validate_certs: false   # TLS disabled on internal hops (PLAN §4.4); leader UI cert is self-signed.
+    status_code: 200
+  register: _cribl_login
+  no_log: true
+
+- name: Commit this group's config
+  ansible.builtin.uri:
+    url: "https://{{ cribl_leader_private_ip }}:{{ cribl_api_port }}/api/v1/version/commit"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _cribl_login.json.token }}"
+    body_format: json
+    body:
+      message: "llt automation: configure group {{ _group }} for run {{ run_id | default('install') }}"
+      group: "{{ _group }}"
+    validate_certs: false
+    status_code: 200
+  register: _cribl_commit
+  no_log: true
+
+- name: Deploy the committed config to this worker group
+  ansible.builtin.uri:
+    url: "https://{{ cribl_leader_private_ip }}:{{ cribl_api_port }}/api/v1/products/stream/groups/{{ _group }}/deploy"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ _cribl_login.json.token }}"
+    body_format: json
+    body:
+      version: "{{ _cribl_commit.json.commit }}"
+    validate_certs: false
+    status_code: 200
+  register: _cribl_deploy
+  no_log: true
+  # Deliberately NOT failed_when:false — a failed deploy leaves this group's
+  # workers running the PREVIOUS scenario's config, silently corrupting the
+  # run's data with stale hop wiring. Let it fail the play (m6: drop
+  # failed_when masks on Cribl control-plane operations).

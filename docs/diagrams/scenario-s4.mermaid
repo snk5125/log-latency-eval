@@ -1,0 +1,27 @@
+%%{init: {"sequence": {"noteAlign": "left", "mirrorActors": false}} }%%
+%% docs/diagrams/scenario-s4.mermaid
+%% S4: Host -> S3 (landing) -> Aggregator-T1 -> Aggregator-T2 -> S3 (final)
+%% PLAN.md §2 (scenario table), §5.1 (timestamps), §5.2 (derivation).
+sequenceDiagram
+    participant generator as Generator
+    participant agent as Agent: Vector or Cribl Edge
+    participant landing as Landing S3: llt-landing-vagg-{acct} / llt-landing-cs-{acct}
+    participant sqs as SQS: llt-landing-vagg-q / llt-landing-cs-q
+    participant T1 as Aggregator T1: S3 source, SQS-driven
+    participant T2 as Aggregator T2: llt-vagg-t2-nlb :8081 / llt-cs-t2-nlb :8081
+    participant final as Final S3: llt-final-{acct}
+
+    generator->>generator: write event file<br/>t_gen_ns (generation time)
+    generator->>agent: event file (local read)
+    Note over agent: hop_ts.agent captured here —<br/>BEFORE any egress (incl. this S3 landing write)
+    agent->>landing: S3 PutObject via sender<br/>S3 gateway endpoint (cross-account)<br/>batch 5s / 10MB
+    Note over landing: landing PutObject time captured<br/>(x-amz-meta-llt-put-ms preferred,<br/>LastModified fallback — fallback operative)
+    landing->>sqs: S3 event notification<br/>ObjectCreated:*
+    sqs->>T1: long-poll consume<br/>(event-driven pickup)
+    Note over T1: hop_ts.agg1 captured here<br/>(VRL remap / Cribl Eval on receive<br/>from S3 source)
+    T1->>T2: HTTP/1.1 POST NDJSON<br/>intra-VPC via Tier-2 NLB<br/>:8081, TLS off, 1s batch
+    Note over T2: hop_ts.agg2 captured here<br/>(VRL remap / Cribl Eval on receive)
+    T2->>final: S3 sink PutObject<br/>batch 5s / 10MB
+    Note over final: final PutObject time captured<br/>(x-amz-meta-llt-put-ms preferred,<br/>LastModified fallback — fallback operative)
+
+    Note over generator,final: Derivations (PLAN §5.2):<br/>gen→agent = hop_ts.agent − t_gen<br/>agent→landing = landingPut − hop_ts.agent<br/>landing→T1 = hop_ts.agg1 − landingPut<br/>T1→T2 = hop_ts.agg2 − hop_ts.agg1<br/>T2→final = finalPut − hop_ts.agg2<br/>e2e = finalPut − t_gen<br/>raw e2e includes 2 × 5s batch flush — see measurement.mermaid

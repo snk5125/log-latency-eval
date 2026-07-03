@@ -15,13 +15,22 @@ eventgen_s3_uri: "s3://{{ llt_artifacts_bucket }}/harness/generator/eventgen.py"
 # Local install paths.
 eventgen_dir_linux: /opt/llt/generator
 eventgen_bin_linux: /opt/llt/generator/eventgen.py
+# Contract with harness/orchestrator/run_matrix.py: the generator's local
+# output MUST be exactly this path — the orchestrator fetches
+# <output>.manifest.json from alongside it.
 eventgen_output_linux: /opt/llt/generator/out/events.ndjson   # agent tails this
 eventgen_config_linux: /opt/llt/generator/generator.json
 
+# Backslash form — for win_* MODULES (fetch/copy/service management) only.
 eventgen_dir_win: C:\llt\generator
 eventgen_bin_win: C:\llt\generator\eventgen.py
 eventgen_output_win: C:\llt\generator\out\events.ndjson       # agent tails this
 eventgen_config_win: C:\llt\generator\generator.json
+# Forward-slash form of the output path, for use ONLY inside rendered config
+# CONTENT (generator.json.j2 `output_path`). C11: backslashes inside a
+# double-quoted JSON string are illegal escapes (\l, \g...) and the JSON
+# parser (or eventgen.py's own json.load) rejects the file.
+eventgen_output_win_fwd: "C:/llt/generator/out/events.ndjson"
 
 # --- Generator run parameters (overridden per-run by configure-scenario) -----
 # EPS tier for THIS host: 1000 / 5000 / 10000 (PLAN §3 volume dimension).
@@ -36,10 +45,19 @@ eventgen_event_size_bytes: 512
 # measurement). The generator tags/handles warmup; orchestrator also windows it.
 eventgen_warmup_seconds: 120
 
+# C9: measurement duration — orchestrator passes eventgen_duration_seconds
+# per run (PLAN §3: 10 min measurement default); this default lets site.yml's
+# initial install render without that extra-var (matches the 600s = 10 min
+# convention used by harness/orchestrator/scenarios.yaml defaults).
+eventgen_duration_seconds: 600
+
 # run_id is injected per run (PLAN §3). Empty until configure-scenario sets it.
 run_id: ""
 
-# Windows service name (NSSM-wrapped).
-eventgen_win_service_name: llt-eventgen
+# m7: single service-name var used for BOTH the Linux systemd unit name and
+# the Windows NSSM service name (previously named eventgen_win_service_name
+# despite being used cross-platform in tasks/linux.yml — misleading). Value
+# unchanged: llt-eventgen.
+eventgen_service_name: llt-eventgen
 
 # Cribl Free / license note not relevant here; generator has no license.

@@ -108,6 +108,6 @@ output "cribl_leader_instance_id" {
 }
 
 output "cribl_leader_private_ip" {
-  description = "Cribl Stream leader private IP — bridged into Ansible as cribl_leader_host (workers join on :4200) by scripts/gen-ansible-vars.sh."
+  description = "Cribl Stream leader private IP — bridged into Ansible as cribl_leader_private_ip (workers join on :4200) by scripts/gen-ansible-vars.sh."
   value       = module.cribl_stream.leader_private_ip
 }

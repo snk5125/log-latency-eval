@@ -1,0 +1,19 @@
+%%{init: {"sequence": {"noteAlign": "left", "mirrorActors": false}} }%%
+%% docs/diagrams/scenario-s1.mermaid
+%% S1: Host -> Aggregator -> S3 (final)
+%% PLAN.md §2 (scenario table), §5.1 (timestamps), §5.2 (derivation).
+sequenceDiagram
+    participant generator as Generator
+    participant agent as Agent: Vector or Cribl Edge
+    participant T1 as Aggregator T1: llt-vagg-t1-nlb :8080 / llt-cs-t1-nlb :8080
+    participant final as Final S3: llt-final-{acct}
+
+    generator->>generator: write event file<br/>t_gen_ns (generation time)
+    generator->>agent: event file (local read)
+    Note over agent: hop_ts.agent captured here —<br/>BEFORE any egress (incl. S3 landing write)
+    agent->>T1: HTTP/1.1 POST NDJSON<br/>via PrivateLink interface endpoint<br/>(llt-sender-vagg-ep / llt-sender-cs-ep)<br/>:8080, TLS off
+    Note over T1: hop_ts.agg1 captured here<br/>(VRL remap / Cribl Eval on receive)
+    T1->>final: S3 sink PutObject<br/>batch 5s / 10MB
+    Note over final: final PutObject time captured<br/>(x-amz-meta-llt-put-ms preferred,<br/>LastModified fallback — fallback operative)
+
+    Note over generator,final: Derivations (PLAN §5.2):<br/>gen→agent = hop_ts.agent − t_gen<br/>agent→T1 = hop_ts.agg1 − hop_ts.agent<br/>T1→final = finalPut − hop_ts.agg1<br/>e2e = finalPut − t_gen

@@ -46,6 +46,29 @@ licenses/
 report/evidence/raw/
 report/evidence/*.jsonl
 report/evidence/*.csv.gz
+# Per-run evidence directories (report/evidence/<run_id>/...) hold run/generator
+# manifests and any other artifacts run_matrix.py/analyze.py write per run —
+# live resource identifiers (bucket names, instance/host IDs) and raw counts,
+# not source. Ignore all generated content under a run's evidence directory...
+report/evidence/*/
+# ...but keep the checked-in scaffolding files at the top level of evidence/
+# (README.md documents the directory; .gitkeep, if present, holds the empty dir
+# in git before any run has produced evidence).
+!report/evidence/.gitkeep
+!report/evidence/README.md
+# Explicit manifest patterns (belt-and-suspenders with the directory-level
+# ignore above, and correct even if a manifest is ever written directly under
+# report/evidence/ rather than nested under a run_id subdirectory).
+report/evidence/**/run-manifest.json
+report/evidence/**/*.manifest.json
+# analyze.py output tables/summary (written to report/evidence/ by default,
+# PLAN §8 phase 4) — regenerated from live S3 data, not source.
+latency_stats.csv
+latency_stats.md
+latency_summary.json
+# run_matrix.py resumability state (report/evidence/run_matrix_state.json by
+# default) — local orchestration progress, not source, and account/run-specific.
+run_matrix_state.json
 harness/**/__pycache__/
 *.pyc
 .venv/

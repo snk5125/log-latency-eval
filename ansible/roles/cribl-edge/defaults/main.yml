@@ -24,7 +24,13 @@ cribl_edge_version: "4.13.0"
 # Cribl provides a combined package; Edge is launched in edge mode. Download
 # uses the versioned CDN path.
 cribl_edge_download_linux: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl-{{ cribl_edge_version }}-linux-x64.tgz"
-cribl_edge_download_win: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl-{{ cribl_edge_version }}-windows-x64.zip"
+# M3: Cribl does NOT ship a Windows .zip for Edge — Windows install is via MSI.
+# URL follows Cribl's documented download-CDN pattern for the Windows MSI
+# artifact. TODO: confirm the exact 4.13.0 MSI filename/URL against
+# https://docs.cribl.io/edge/deploy-windows/ (or the CDN listing) before first
+# real deploy — left as a comment rather than blocking the build (per the
+# task's "do not stall" guidance for unverified URLs).
+cribl_edge_download_win: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl-{{ cribl_edge_version }}-windows-x64.msi"
 
 # CRIBL_HOME install roots.
 cribl_home_linux: /opt/cribl
@@ -37,26 +43,84 @@ cribl_edge_local_win: C:\Cribl\local\cribl
 
 # --- Source: generator output file to monitor (parity with vector-agent) ----
 cribl_edge_source_path_linux: /opt/llt/generator/out/events.ndjson
+# Backslash form — reserved for any win_* MODULE that needs a literal Windows
+# path (fetch/copy/service management). NOT for rendered config content.
 cribl_edge_source_path_win: C:\llt\generator\out\events.ndjson
+# Forward-slash form of the same path, for use ONLY inside rendered config
+# content (inputs.yml.j2 `filenames:`). Backslashes inside a double-quoted
+# YAML/JSON scalar produce illegal escapes and Cribl's config loader rejects
+# the file (C11 fix).
+cribl_edge_source_path_win_fwd: "C:/llt/generator/out/events.ndjson"
 
 # --- Scenario wiring (injected per run) ------------------------------------
 scenario: "s1"
 
-# Tier-1 aggregator NLB DNS (Cribl stack) — HTTP target for S1/S2. NOTE: even
-# with the Cribl EDGE agent, PLAN §4.4 mandates HTTP NDJSON to the aggregator
-# NLB; when aggregator=cs the target is the Cribl worker t1 NLB, when the matrix
-# pairs ce+vagg the target is the Vector t1 NLB. The orchestrator passes the
-# correct NLB DNS for the active aggregator stack via this var.
-cribl_edge_agg_t1_nlb: "llt-cs-t1-nlb.internal.invalid"
-cribl_edge_agg_t1_port: 8080             # Tier-1 :8080 (PLAN §4.4)
+# --- Cross-pairing (C10) ----------------------------------------------------
+# CRITICAL: the agent targets the CELL's aggregator, not its own stack's. A
+# Cribl Edge agent running in a Vector-aggregator cell (aggregator=vagg) must
+# still send to the Vector tier-1 NLB / Vector landing bucket, and vice versa.
+# The `aggregator` extra-var (vagg|cs) is passed by the orchestrator per run
+# (harness/orchestrator/run_matrix.py); default to 'vagg' so site.yml (which
+# runs without that extra-var) still renders.
+aggregator: "vagg"
 
-# Landing bucket for S3/S4. As with the NLB, the orchestrator passes the landing
-# bucket matching the active aggregator stack (vagg vs cs landing bucket).
+# Tier-1 aggregator NLB DNS names — HTTP target for S1/S2. Both stacks' NLB
+# names are populated from generated_infra.yml at deploy time (Terraform
+# outputs); llt_t1_endpoint below selects the correct one for this cell.
+# (Previously this file claimed "the orchestrator passes the correct NLB DNS"
+# via cribl_edge_agg_t1_nlb directly — that was never true: the orchestrator
+# only passes run_id/scenario/agent/aggregator/volume/eventgen_* extra-vars,
+# per its documented contract. Endpoint selection happens HERE via
+# llt_t1_endpoint, keyed on the `aggregator` var, matching vector-agent.)
+vector_agg_t1_nlb: "llt-vagg-t1-nlb.internal.invalid"
+cribl_edge_agg_t1_nlb: "llt-cs-t1-nlb.internal.invalid"
+cribl_edge_agg_t1_port: 8080             # Tier-1 :8080 (PLAN §4.4), both stacks
+# Selected T1 HTTP endpoint for THIS cell (C10) — use in outputs.yml.j2,
+# not cribl_edge_agg_t1_nlb directly.
+llt_t1_endpoint: "{{ vector_agg_t1_nlb if (aggregator | default('vagg')) == 'vagg' else cribl_edge_agg_t1_nlb }}"
+
+# Landing buckets for S3/S4 — both stacks' bucket names populated from
+# generated_infra.yml; llt_landing_bucket below selects the correct one.
+vector_landing_bucket: "llt-landing-vagg-REPLACE"
 cribl_edge_landing_bucket: "llt-landing-cs-REPLACE"
+# Selected landing bucket for THIS cell (C10) — use in outputs.yml.j2,
+# not cribl_edge_landing_bucket directly.
+llt_landing_bucket: "{{ vector_landing_bucket if (aggregator | default('vagg')) == 'vagg' else cribl_edge_landing_bucket }}"
+
 cribl_edge_aws_region: "{{ llt_aws_region | default('us-east-2') }}"
 
 # --- Batch constants — CONTROLLED CONSTANT (PLAN §4.5), identical to Vector --
 cribl_edge_s3_flush_secs: 5              # S3 flush 5 s (== Vector timeout_secs)
 cribl_edge_s3_max_bytes: 10485760       # 10 MB (== Vector max_bytes)
+
+# --- Low-latency tuning profile (PLAN §4.6) — see docs/TUNING.md -----------
+# Item 1: File Monitor source discovery/poll interval. Cribl's "Polling
+# interval" defaults to 10 s (docs.cribl.io/stream/sources-file-monitor/,
+# same source type used standalone by Edge) — floored to 1 s, the parity
+# counterpart to Vector's glob_minimum_cooldown_ms floor (vector-agent
+# defaults/main.yml). Could not find a documented MINIMUM for this setting
+# (only the 10 s default) — 1 s is chosen as a safe practical floor rather
+# than 0, which risks being rejected/rounded by the UI's own validation;
+# left as a TODO to verify against a live 4.13 instance if 0 is in fact
+# accepted as "as fast as possible."
+cribl_edge_poll_interval_secs: 1
+
+# Items 6-8: RECORD ONLY — see the full citations in
+# ansible/roles/vector-agent/defaults/main.yml ("Items 6-8" block). Summary:
+# item 6 (NLB cross-zone + deregistration delay) done in terraform (both
+# vector-aggregator and cribl-stream modules, identical values — parity);
+# item 7 (2-AZ placement) done in terraform via zone-id selection,
+# constraint-only; item 8 (ENA/MTU/unattended-upgrades/gp3-not-tmpfs) is
+# either an AWS default, already in the `common` role, or terraform-side —
+# no cribl-edge config change for any of the three.
+
+# Item 2: Webhook destination request concurrency. Cribl default is 5
+# (range 1-32, docs.cribl.io/stream/destinations-webhook/); raised toward
+# the documented max so concurrency is allowed to scale under load (parity
+# intent with Vector's adaptive concurrency, though Cribl's own knob is a
+# fixed cap rather than an adaptive algorithm — recorded as a parity-ledger
+# asymmetry in docs/TUNING.md: Cribl's "scale" is a raised static ceiling,
+# Vector's is a live-adaptive algorithm).
+cribl_edge_concurrency: 32
 
 run_id: ""

@@ -42,6 +42,11 @@ locals {
 # Trust policy: EC2 assumes this role. WHY: generator hosts are EC2 instances
 # that need an instance profile to talk to SSM and S3 without static keys.
 data "aws_iam_policy_document" "generator_assume" {
+  # Pinned to an aliased provider: the module has no default `aws` provider, so
+  # an unpinned data source would bind to an unconfigured implicit provider and
+  # fail `terraform plan` on machines without ambient AWS credentials/region.
+  provider = aws.sender
+
   statement {
     sid     = "EC2AssumeRole"
     actions = ["sts:AssumeRole"]
@@ -75,6 +80,8 @@ resource "aws_iam_role_policy_attachment" "generator_ssm_core" {
 
 # Inline S3 policy for generators — landing PutObject + artifacts read/write.
 data "aws_iam_policy_document" "generator_s3" {
+  provider = aws.sender # see generator_assume: no default provider in module
+
   # WHY: S3/S4 data path — the on-host agent writes event batches directly to
   # the landing buckets (in the logging account). Scoped to object PUT only.
   statement {
@@ -141,6 +148,8 @@ resource "aws_iam_instance_profile" "generator_host" {
 # ===========================================================================
 
 data "aws_iam_policy_document" "aggregator_assume" {
+  provider = aws.logging # see generator_assume: no default provider in module
+
   statement {
     sid     = "EC2AssumeRole"
     actions = ["sts:AssumeRole"]
@@ -172,6 +181,8 @@ resource "aws_iam_role_policy_attachment" "aggregator_ssm_core" {
 }
 
 data "aws_iam_policy_document" "aggregator_s3_sqs" {
+  provider = aws.logging # see generator_assume: no default provider in module
+
   # WHY: S3/S4 — aggregator S3 sources read event batches back out of the
   # landing buckets after the agent wrote them. Read-only on landing objects.
   statement {

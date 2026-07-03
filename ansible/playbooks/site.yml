@@ -25,6 +25,8 @@
 - name: Baseline all Linux hosts (common + time-sync)
   hosts: os_linux
   gather_facts: true
+  # aws_ssm connects as ssm-user, not root (C1) — escalate for all Linux tasks.
+  become: true
   vars:
     # --- aws_ssm connection vars (Linux) -------------------------------------
     ansible_connection: aws_ssm
@@ -43,6 +45,7 @@
 - name: Baseline all Windows hosts (common + time-sync)
   hosts: os_windows
   gather_facts: true
+  # Windows aws_ssm sessions already run as SYSTEM — no become (stays become-free).
   vars:
     # --- aws_ssm connection vars (Windows) -----------------------------------
     ansible_connection: aws_ssm
@@ -64,9 +67,14 @@
 - name: Install event generator on generator hosts (stopped/disabled)
   hosts: role_generator
   gather_facts: true
+  # Mixed OS play: escalate only for Linux members (aws_ssm connects as
+  # ssm-user there, C1); Windows aws_ssm sessions already run as SYSTEM.
+  # Keyed off inventory group membership (M9), not gathered facts, so this
+  # is stable even if the fact cache is stale mid-matrix.
+  become: "{{ 'os_linux' in group_names }}"
   vars:
     ansible_connection: aws_ssm
-    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_shell_type: "{{ 'powershell' if 'os_windows' in group_names else 'sh' }}"
     ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
@@ -83,9 +91,11 @@
 - name: Install Vector agent on Vector-stack generator hosts
   hosts: role_generator
   gather_facts: true
+  # Mixed OS play — see become rationale above (C1/M9).
+  become: "{{ 'os_linux' in group_names }}"
   vars:
     ansible_connection: aws_ssm
-    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_shell_type: "{{ 'powershell' if 'os_windows' in group_names else 'sh' }}"
     ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
@@ -99,9 +109,11 @@
 - name: Install Cribl Edge on Cribl-stack generator hosts
   hosts: role_generator
   gather_facts: true
+  # Mixed OS play — see become rationale above (C1/M9).
+  become: "{{ 'os_linux' in group_names }}"
   vars:
     ansible_connection: aws_ssm
-    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_shell_type: "{{ 'powershell' if 'os_windows' in group_names else 'sh' }}"
     ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
@@ -117,6 +129,8 @@
 - name: Configure Vector aggregators (tier-1 and tier-2)
   hosts: role_agg_t1:role_agg_t2
   gather_facts: true
+  # Aggregator fleet is Linux-only (PLAN §4.3) — plain become (C1).
+  become: true
   vars:
     ansible_connection: aws_ssm
     ansible_shell_type: sh
@@ -134,6 +148,8 @@
 - name: Configure Cribl Stream leader
   hosts: role_leader
   gather_facts: true
+  # Leader host is Linux-only (PLAN §4.3) — plain become (C1).
+  become: true
   vars:
     ansible_connection: aws_ssm
     ansible_shell_type: sh
@@ -150,6 +166,8 @@
 - name: Configure Cribl Stream workers (groups t1/t2)
   hosts: role_agg_t1:role_agg_t2
   gather_facts: true
+  # Aggregator fleet is Linux-only (PLAN §4.3) — plain become (C1).
+  become: true
   vars:
     ansible_connection: aws_ssm
     ansible_shell_type: sh

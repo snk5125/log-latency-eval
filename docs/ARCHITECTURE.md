@@ -9,6 +9,12 @@ disagree, `PLAN.md` governs.
 
 ## 1. Two-Account Topology
 
+> **Diagram:** [`docs/diagrams/topology.mermaid`](diagrams/topology.mermaid) /
+> [`.svg`](diagrams/topology.svg) — rendered version of everything in this
+> section (both VPCs/subnets/AZs, SSM + S3 endpoints, PrivateLink endpoint
+> services ↔ interface endpoints, all four NLBs, aggregator fleets, leader, S3
+> buckets, SQS queues).
+
 The experiment deliberately splits the pipeline across **two AWS accounts** in a
 **single region** (`us-east-2` default, `aws_region` variable; `PLAN.md` §4.1).
 Terraform drives both with aliased providers `aws.sender` and `aws.logging`,
@@ -109,11 +115,20 @@ All in the logging account, SSE-S3, versioning off, 7-day lifecycle expiry
 
 ## 3. Scenario Data Paths (per-hop timestamp capture)
 
+> **Diagrams:** each scenario below also has a rendered Mermaid sequence
+> diagram — [`docs/diagrams/scenario-s1.mermaid`](diagrams/scenario-s1.mermaid)
+> … [`scenario-s4.mermaid`](diagrams/scenario-s4.mermaid) (+ matching `.svg`) —
+> with every hop and its timestamp capture point labeled (`PLAN.md` §5A).
+
 Each sequence marks the point at which each timestamp is captured. `t_gen` is
 written by the generator; `hop_ts.agent`, `hop_ts.agg1`, `hop_ts.agg2` are
 appended by the tool's transform on receive (ms precision); S3 hops are
-timestamped from the object PutObject / S3-event `eventTime` at analysis time
-(`PLAN.md` §5.1). Per-hop derivations are in §4 below and `PLAN.md` §5.2.
+timestamped from the object PutObject time at analysis time — the analyzer
+prefers an `x-amz-meta-llt-put-ms` object-metadata header (ms) where a sink
+sets it, and otherwise falls back to `LastModified` (second-precision). Neither
+sink currently writes that metadata, so `LastModified` is the operative path
+today (`PLAN.md` §5.1, §5.4 item 3). Per-hop derivations are in §4 below and
+`PLAN.md` §5.2.
 
 ### S1 — Host → Aggregator → S3 (final)
 
@@ -128,7 +143,7 @@ timestamped from the object PutObject / S3-event `eventTime` at analysis time
     │                 │      [hop_ts.agg1 captured on agg recv] │
     │                 │                   │ S3 sink (5s/10MB)  │
     │                 │                   ├─── PutObject ─────►│
-    │                 │                   │   [final PutObject/eventTime captured]
+    │                 │                   │   [final PutObject time captured]
 ```
 
 ### S2 — Host → Aggregator-T1 → Aggregator-T2 → S3 (final)
@@ -147,7 +162,7 @@ timestamped from the object PutObject / S3-event `eventTime` at analysis time
     │             │               │         [hop_ts.agg2]          │
     │             │               │                │ S3 sink 5s/10MB│
     │             │               │                ├── PutObject ──►│
-    │             │               │                │    [final PutObject/eventTime]
+    │             │               │                │    [final PutObject time]
 ```
 
 ### S3 — Host → S3 (landing) → Aggregator → S3 (final)
@@ -160,13 +175,13 @@ timestamped from the object PutObject / S3-event `eventTime` at analysis time
     │    [hop_ts.agent]       │                    │               │
     │           │ S3 sink 5s/10MB                  │               │
     │           ├── PutObject►│                    │               │
-    │           │      [landing PutObject/eventTime captured]      │
+    │           │      [landing PutObject time captured]      │
     │           │             │ S3 event → SQS     │               │
     │           │             ├───────────────────►│ (event-driven)│
     │           │             │              [hop_ts.agg1]         │
     │           │             │                    │ S3 sink 5s/10MB│
     │           │             │                    ├── PutObject ──►│
-    │           │             │                    │   [final PutObject/eventTime]
+    │           │             │                    │   [final PutObject time]
 ```
 
 ### S4 — Host → S3 (landing) → Aggregator-T1 → Aggregator-T2 → S3 (final)
@@ -179,7 +194,7 @@ timestamped from the object PutObject / S3-event `eventTime` at analysis time
     │  [hop_ts.agent]    │               │              │             │
     │         │ S3 sink 5s/10MB          │              │             │
     │         ├─PutObject►│               │              │             │
-    │         │   [landing PutObject/eventTime]         │             │
+    │         │   [landing PutObject time]         │             │
     │         │          │ S3 event→SQS  │              │             │
     │         │          ├──────────────►│ (event-driven)             │
     │         │          │         [hop_ts.agg1]        │             │
@@ -188,12 +203,16 @@ timestamped from the object PutObject / S3-event `eventTime` at analysis time
     │         │          │               │        [hop_ts.agg2]       │
     │         │          │               │              │ S3 sink 5s/10MB
     │         │          │               │              ├─ PutObject ►│
-    │         │          │               │              │  [final PutObject/eventTime]
+    │         │          │               │              │  [final PutObject time]
 ```
 
 ---
 
 ## 4. Per-Hop Latency Derivation
+
+> **Diagram:** [`docs/diagrams/measurement.mermaid`](diagrams/measurement.mermaid)
+> / [`.svg`](diagrams/measurement.svg) — visual form of the table below,
+> including the raw-vs-batch-adjusted note (`PLAN.md` §5A, §5.4 item 1).
 
 Reproduced from `PLAN.md` §5.2 for reviewer convenience:
 

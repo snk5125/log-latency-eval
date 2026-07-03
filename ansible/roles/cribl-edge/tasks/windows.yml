@@ -1,17 +1,22 @@
 # =============================================================================
-# roles/cribl-edge/tasks/windows.yml — install pinned Cribl Edge (zip)
+# roles/cribl-edge/tasks/windows.yml — install pinned Cribl Edge (MSI)
 # =============================================================================
+# M3: Cribl does not publish a Windows .zip artifact for Edge — Windows Edge
+# ships as an MSI that registers and manages its OWN Windows service (unlike
+# vector-agent, which has no MSI and genuinely needs NSSM). Do not use
+# win_get_url+win_unzip+win_nssm here.
 ---
-- name: Download pinned Cribl package (Windows)
+- name: Download pinned Cribl Edge MSI (Windows)
   ansible.windows.win_get_url:
     url: "{{ cribl_edge_download_win }}"
-    dest: "C:\\llt\\cribl-{{ cribl_edge_version }}.zip"
+    dest: "C:\\llt\\cribl-{{ cribl_edge_version }}.msi"
 
-- name: Unzip Cribl (Windows)
-  community.windows.win_unzip:
-    src: "C:\\llt\\cribl-{{ cribl_edge_version }}.zip"
-    dest: "C:\\"
-    # unpacks to C:\Cribl (== cribl_home_win).
+- name: Install Cribl Edge via MSI (Windows)
+  ansible.windows.win_package:
+    path: "C:\\llt\\cribl-{{ cribl_edge_version }}.msi"
+    state: present
+    # The MSI installs to cribl_home_win (C:\Cribl) and registers a Windows
+    # service (service name asserted below); no NSSM wrapper needed.
 
 - name: Ensure standalone local config directory exists (Windows)
   ansible.windows.win_file:
@@ -24,12 +29,21 @@
   changed_when: false
   failed_when: false
 
-- name: Install Cribl Edge as a Windows service via NSSM (edge mode)
-  community.windows.win_nssm:
+- name: Select Cribl Edge product mode (Windows)
+  ansible.windows.win_shell: '& "{{ cribl_home_win }}\bin\cribl.exe" mode-edge'
+  register: _cribl_edge_mode_win
+  changed_when: "'already' not in (_cribl_edge_mode_win.stdout | default(''))"
+  # C7-equivalent for Windows: product mode (edge vs stream) is selected the
+  # same way as Linux via `cribl mode-edge`; the MSI's own service definition
+  # supersedes any boot-start/NSSM step. `failed_when: false` REMOVED (m6) —
+  # a failed mode switch must abort the play; proceeding would install an
+  # agent silently NOT in Edge mode.
+
+- name: Ensure the MSI-installed Cribl service is running and enabled (Windows)
+  ansible.windows.win_service:
     name: "{{ cribl_edge_service_name }}"
-    application: "{{ cribl_home_win }}\\bin\\cribl.exe"
-    arguments: 'start'
-    state: present
     start_mode: auto
-  # Edge mode is selected by the mode file written under local/ (see configure);
-  # Windows has no boot-start helper, so NSSM supervises `cribl start`.
+    state: started
+  # The MSI registers the service (name matches cribl_edge_service_name per
+  # Cribl's Windows installer convention); this task just asserts the desired
+  # running state rather than re-creating the service definition.

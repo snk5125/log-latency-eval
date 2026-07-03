@@ -29,10 +29,20 @@
   failed_when: false
   # PLAN §7: record exact deployed version to evidence.
 
-- name: Install Cribl Edge as a boot service in EDGE mode (Linux)
+- name: Select Cribl Edge product mode (Linux)
+  ansible.builtin.command: "{{ cribl_home_linux }}/bin/cribl mode-edge"
+  register: _cribl_edge_mode
+  changed_when: "'already' not in (_cribl_edge_mode.stdout | default(''))"
+  # C7 fix: `cribl boot-start enable -m edge` is INVALID — boot-start's -m flag
+  # takes an INIT SYSTEM (systemd|initd), not a product mode. Product mode
+  # (edge vs stream) is selected by `cribl mode-edge` beforehand; standalone
+  # (no leader URL), so Edge runs self-managed from local/.
+
+- name: Install Cribl Edge as a systemd boot service (Linux)
   ansible.builtin.command: >-
-    {{ cribl_home_linux }}/bin/cribl boot-start enable -m edge -u root
+    {{ cribl_home_linux }}/bin/cribl boot-start enable -m systemd -u root
   register: _cribl_edge_bootstart
   changed_when: "'already' not in (_cribl_edge_bootstart.stdout | default(''))"
-  # -m edge selects Edge (not Stream) mode; boot-start installs the systemd unit.
-  # Standalone: no leader URL is passed, so Edge runs self-managed from local/.
+  # C7 fix: -m systemd is the init-system selector boot-start actually expects;
+  # -u root runs the service as root (needed to read the generator output file
+  # regardless of which user wrote it).

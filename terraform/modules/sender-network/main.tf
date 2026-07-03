@@ -22,7 +22,20 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+  # Select AZs by ZONE ID, not name: AZ names map to different physical zones
+  # per account, so name-based selection across the two accounts can land the
+  # PrivateLink consumer endpoints in AZs the endpoint services don't support
+  # (apply-time failure) or silently place the accounts in different physical
+  # AZs — an unmodeled cross-AZ hop violating PLAN §4.6(7). Sorting zone IDs
+  # gives both network modules the same deterministic physical pair.
+  az_name_by_id = zipmap(
+    data.aws_availability_zones.available.zone_ids,
+    data.aws_availability_zones.available.names,
+  )
+  azs = [
+    for id in slice(sort(data.aws_availability_zones.available.zone_ids), 0, var.az_count) :
+    local.az_name_by_id[id]
+  ]
 
   # Private subnets: /20 blocks carved from the /16, one per AZ.
   # WHY /20: ample host space for the small host count while leaving room to add
@@ -175,13 +188,14 @@ resource "aws_vpc_endpoint" "s3" {
 }
 
 # ---------------------------------------------------------------------------
-# Security group for interface endpoints — allow HTTPS from within the VPC.
-# WHY: SSM + PrivateLink interface endpoints terminate TLS on :443; hosts in
-# the VPC must reach them. Scoped to the VPC CIDR only.
+# Security group for the SSM interface endpoints — allow HTTPS from within the
+# VPC. WHY: the ssm/ssmmessages/ec2messages endpoints terminate TLS on :443;
+# hosts in the VPC must reach them. Scoped to the VPC CIDR only. (The
+# aggregator PrivateLink endpoints use their own SG below — data port 8080.)
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "endpoints" {
   name        = "${var.name_prefix}-sender-endpoints-sg"
-  description = "Allow HTTPS (443) from the sender VPC to interface endpoints (SSM + PrivateLink)."
+  description = "Allow HTTPS (443) from the sender VPC to the SSM interface endpoints."
   vpc_id      = aws_vpc.this.id
 
   ingress {
@@ -226,6 +240,39 @@ resource "aws_vpc_endpoint" "ssm" {
 }
 
 # ---------------------------------------------------------------------------
+# Security group for the AGGREGATOR PrivateLink consumer endpoints.
+# WHY separate from the SSM endpoint SG: the fronted endpoint services are the
+# logging-account Tier-1 NLBs listening on TCP 8080 (PLAN §4.4) — the agents
+# POST NDJSON to the endpoint ENIs on 8080, not 443. The SSM SG's 443-only
+# ingress would silently drop the entire S1/S2 data path.
+# ---------------------------------------------------------------------------
+resource "aws_security_group" "aggregator_endpoints" {
+  name        = "${var.name_prefix}-sender-agg-endpoints-sg"
+  description = "Allow Tier-1 data port (8080) from the sender VPC to the aggregator PrivateLink endpoints."
+  vpc_id      = aws_vpc.this.id
+
+  ingress {
+    description = "Agent NDJSON POST to Tier-1 NLBs via PrivateLink (PLAN §4.4)"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  egress {
+    description = "Allow all egress from endpoint ENIs (responses)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.common_tags, {
+    Name = "${var.name_prefix}-sender-agg-endpoints-sg"
+  })
+}
+
+# ---------------------------------------------------------------------------
 # PrivateLink CONSUMER interface endpoints against the logging-account
 # aggregator endpoint services (one per aggregator technology).
 # WHY: PLAN §4.2/§4.3 — the agent→aggregator hop crosses the account boundary
@@ -238,7 +285,7 @@ resource "aws_vpc_endpoint" "vector_aggregator" {
   service_name        = var.vector_aggregator_service_name
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.endpoints.id]
+  security_group_ids  = [aws_security_group.aggregator_endpoints.id]
   private_dns_enabled = false
 
   tags = merge(var.common_tags, {
@@ -252,7 +299,7 @@ resource "aws_vpc_endpoint" "cribl_aggregator" {
   service_name        = var.cribl_aggregator_service_name
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.endpoints.id]
+  security_group_ids  = [aws_security_group.aggregator_endpoints.id]
   private_dns_enabled = false
 
   tags = merge(var.common_tags, {

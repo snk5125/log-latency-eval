@@ -50,7 +50,12 @@ Accurate cross-host timestamps are load-bearing for every hop delta. The
 values as run evidence.
 
 ```bash
-ansible-playbook ansible/playbooks/assert-clocks.yml
+# Run from the ansible/ directory so ansible.cfg (inventory = inventories/) is
+# picked up, and pass a run_id — the playbook records evidence keyed by it.
+# The orchestrator supplies the real per-cell run_id; for a manual preflight
+# check any label works.
+cd ansible
+ansible-playbook playbooks/assert-clocks.yml -e run_id="preflight-manual"
 ```
 
 Expected bounds (`PLAN.md` §5.3):
@@ -113,7 +118,10 @@ cover both stacks emitting at once.
 aws ssm send-command --profile <sender|logging> \
   --document-name "AWS-RunShellScript" \
   --targets "Key=tag:Stack,Values=vector" \
-  --parameters 'commands=["systemctl is-active vector && vector top --url http://127.0.0.1:8686 || journalctl -u vector -n 50 --no-pager"]'
+  --parameters 'commands=["systemctl is-active vector; journalctl -u vector -n 50 --no-pager"]'
+# NOTE: the Vector API (and `vector top`, port 8686) is intentionally NOT
+# enabled in the aggregator role — the experiment keeps the box to the measured
+# data path only. Use systemctl + journalctl for health, not `vector top`.
 
 # Cribl worker status (Linux)
 aws ssm send-command --profile logging \

@@ -42,18 +42,18 @@ data "aws_ssm_parameter" "windows2022" {
 # tagged exactly per PLAN §7 (Role=generator, Stack, Os).
 # ---------------------------------------------------------------------------
 locals {
+  # subnet_idx spreads each AGENT PAIR across both AZs (lin-vec/win-ce in AZ0,
+  # win-vec/lin-ce in AZ1): during a run only one pair generates, so pinning a
+  # pair to a single AZ would correlate stack with AZ — a placement confound
+  # PLAN §4.6(7) forbids. (Index-by-sorted-key put each pair in one AZ.)
   hosts = {
     # Vector agent pair
-    "lin-vec" = { os = "linux", stack = "vector", ami = data.aws_ssm_parameter.al2023.value }
-    "win-vec" = { os = "windows", stack = "vector", ami = data.aws_ssm_parameter.windows2022.value }
+    "lin-vec" = { os = "linux", stack = "vector", subnet_idx = 0, ami = data.aws_ssm_parameter.al2023.value }
+    "win-vec" = { os = "windows", stack = "vector", subnet_idx = 1, ami = data.aws_ssm_parameter.windows2022.value }
     # Cribl Edge pair
-    "lin-ce" = { os = "linux", stack = "cribl", ami = data.aws_ssm_parameter.al2023.value }
-    "win-ce" = { os = "windows", stack = "cribl", ami = data.aws_ssm_parameter.windows2022.value }
+    "lin-ce" = { os = "linux", stack = "cribl", subnet_idx = 1, ami = data.aws_ssm_parameter.al2023.value }
+    "win-ce" = { os = "windows", stack = "cribl", subnet_idx = 0, ami = data.aws_ssm_parameter.windows2022.value }
   }
-
-  # Deterministically spread the 4 hosts across the available private subnets
-  # (2 AZs) so an AZ loss doesn't take out an entire OS or agent pairing.
-  host_keys = keys(local.hosts)
 }
 
 # ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ resource "aws_instance" "generator" {
 
   ami                    = each.value.ami
   instance_type          = var.instance_type
-  subnet_id              = var.private_subnet_ids[index(local.host_keys, each.key) % length(var.private_subnet_ids)]
+  subnet_id              = var.private_subnet_ids[each.value.subnet_idx % length(var.private_subnet_ids)]
   vpc_security_group_ids = [var.generator_sg_id]
   iam_instance_profile   = var.instance_profile_name
 
@@ -90,7 +90,10 @@ resource "aws_instance" "generator" {
   tags = merge(var.common_tags, {
     # PLAN §7 tag contract: Role/Stack/Os drive the Ansible dynamic inventory
     # groups and the analysis host_os dimension.
-    Name  = "${var.name_prefix}-${each.key}"
+    # Name carries the "-01" instance ordinal: it must equal the host_id used
+    # in events and in harness/orchestrator/scenarios.yaml (PLAN §5.1 example
+    # "llt-lin-vec-01") — run_matrix resolves instances by tag:Name equality.
+    Name  = "${var.name_prefix}-${each.key}-01"
     Role  = "generator"
     Stack = each.value.stack
     Os    = each.value.os

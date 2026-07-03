@@ -12,6 +12,12 @@
 #                        time-sync (PLAN §5.3) and Vector/Cribl Windows installs.
 #   - community.windows: NSSM service wrapping + scheduled-task helpers for the
 #                        event generator on Windows (event-generator role).
+#   - community.general: general-purpose module coverage used opportunistically
+#                        (e.g. filesystem/service helpers not in ansible.builtin);
+#                        also the common home for extra Jinja filters some roles
+#                        may lean on beyond the builtin password_hash filter.
+#   - ansible.posix    : POSIX-y helpers (e.g. synchronize/mount/sysctl-style
+#                        modules) used opportunistically on the Linux estate.
 #
 # Versions are PINNED (PLAN §7: "collections pinned"). Exact deployed versions
 # are recorded as report evidence. Install with:
@@ -34,3 +40,12 @@ collections:
   # Windows community modules (win_nssm for wrapping eventgen.py as a service).
   - name: community.windows
     version: "3.0.0"
+
+  # General-purpose module coverage (m5 — referenced opportunistically by
+  # ansible-lint's default rule set and general Linux role coverage).
+  - name: community.general
+    version: "9.0.0"
+
+  # POSIX helpers for the Linux estate (m5).
+  - name: ansible.posix
+    version: "1.5.4"

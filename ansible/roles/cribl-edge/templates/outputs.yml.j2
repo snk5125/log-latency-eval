@@ -3,31 +3,102 @@
 outputs:
 {% if scenario in ['s1', 's2'] %}
   # ---- S1/S2: Webhook (HTTP NDJSON) to Tier-1 NLB :8080 (PLAN §4.4) ---------
+  # CROSS-PAIRING (C10): target the CELL's aggregator (llt_t1_endpoint), NOT
+  # unconditionally cribl_edge_agg_t1_nlb — this Edge agent may be running in
+  # a Vector-aggregator cell (aggregator=vagg), in which case it must hit the
+  # Vector tier-1 NLB instead.
   to_agg_t1:
     type: webhook
-    url: "http://{{ cribl_edge_agg_t1_nlb }}:{{ cribl_edge_agg_t1_port }}"
+    url: "http://{{ llt_t1_endpoint }}:{{ cribl_edge_agg_t1_port }}"
     method: POST
-    format: ndjson          # newline-delimited JSON == Vector's newline framing
+    # M5: Cribl webhook destination formats are json|raw — "ndjson" is not a
+    # valid value. `format: json` + newline-per-event is Cribl's normal
+    # newline-delimited JSON body shape, matching Vector's framing.method:
+    # newline_delimited (parity preserved).
+    format: json
     # Keep egress near-real-time so the agent->T1 hop measures transport, not
     # buffering (mirrors Vector's 1s agent batch).
+    # CONTROLLED CONSTANT — DO NOT CHANGE (PLAN §4.5/§4.6): this is the
+    # agent-egress near-real-time flush, analogous to Vector's agent-side
+    # batch.timeout_secs: 1 — not one of the §4.6 tuning knobs.
     flushPeriodSec: 1
-    compress: none          # compression NOT assessed (PLAN §5.4)
+    # compression NOT assessed (PLAN §5.4). TUNING §4.6 item 2 — explicitly
+    # disabled: Cribl Webhook's own documented DEFAULT is compression ON
+    # (gzip) (docs.cribl.io/stream/destinations-webhook/, "Compress" toggle
+    # default enabled) — UNLIKE Vector, whose http sink defaults to `none`.
+    # This is therefore an ACTIVE tuning change on the Cribl side (not just a
+    # default kept explicit) to reach parity with Vector's compression-off
+    # behavior, per the CPU-for-latency rationale (PLAN §4.6.2).
+    compress: none
+    # TUNING §4.6 item 2 — connection reuse/keep-alive: Cribl's Webhook
+    # destination "Keep alive" is ON by default, holding the client-side
+    # connection for up to 120 s (docs.cribl.io/stream/destinations-webhook/)
+    # — kept at its default (nothing to change) but recorded explicitly here
+    # since the tuning table needs a citable row. TODO(verify): could not
+    # confirm the exact underlying JSON key name (UI label only, "Keep
+    # alive") against the live 4.13 outputs.yml schema — NOT set explicitly
+    # below to avoid guessing a wrong key that could be silently ignored or
+    # reject the config; relying on the documented default instead.
+    #
+    # TUNING §4.6 item 2 — request concurrency allowed to scale: Cribl's
+    # documented default is 5 (range 1-32); raised to
+    # cribl_edge_concurrency (32, defaults/main.yml) — the parity
+    # counterpart to Vector's adaptive concurrency (see docs/TUNING.md
+    # parity ledger: Cribl's knob is a raised static ceiling, not a live-
+    # adaptive algorithm — recorded as an asymmetry). TODO(verify): could
+    # not confirm the exact underlying JSON key (UI label "Request
+    # concurrency") against the live 4.13 schema — best-guess key name below
+    # by analogy with Cribl's other REST-style destination concurrency
+    # fields; verify against a live node and correct if rejected.
+    concurrency: {{ cribl_edge_concurrency }}
+    # TUNING §4.6 item 3 — buffer/backpressure: Persistent Queue is OFF by
+    # default (must be explicitly selected as the Backpressure behavior;
+    # docs.cribl.io/stream/persistent-queues-destinations/ +
+    # destinations-backpressure-triggers/) — NOT enabling it here keeps this
+    # hop's buffering in-memory only (no disk buffer on the measured path,
+    # matching Vector's buffer.type: memory). Cribl's documented default
+    # Backpressure behavior is Block (matches Vector's buffer.when_full:
+    # block) — recorded explicitly (not set as a key below) because it is
+    # already the wanted default and no PQ-enabling key is being added.
     tls:
       disabled: true        # TLS off on internal hops (PLAN §4.4)
 {% else %}
   # ---- S3/S4: S3 destination to landing bucket, 5s flush/10MB (PLAN §4.5) ---
+  # CROSS-PAIRING (C10): land in the CELL's landing bucket (llt_landing_bucket),
+  # NOT unconditionally cribl_edge_landing_bucket — see rationale above.
   to_landing_s3:
     type: s3
-    bucket: "{{ cribl_edge_landing_bucket }}"
+    bucket: "{{ llt_landing_bucket }}"
     region: "{{ cribl_edge_aws_region }}"
     # Key prefix carries run_id + host_os, identical scheme to the Vector aws_s3
-    # sink (PLAN §5.1 host_os dimension).
-    destPath: "landing/{{ run_id }}/{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}"
-    format: ndjson
+    # sink (PLAN §5.1 host_os dimension). M7: destPath is a JS TEMPLATE LITERAL
+    # in Cribl (backtick-delimited with ${...} interpolation), not a plain
+    # string — "landing/{{ run_id }}/${host_os}" style concatenation without
+    # backticks is inert text, not an interpolated expression. partitionExpr
+    # is neutralized so Cribl's default date-based partitioning doesn't add an
+    # extra date folder into the key — the key must be exactly
+    # landing/{run_id}/{host_os}/<file>, matching Vector's key_prefix scheme.
+    destPath: "`landing/{{ run_id }}/${host_os}`"
+    partitionExpr: "''"
+    format: json
+    # compress: none — PLAN §5.4 lists compression as NOT assessed; also
+    # matches TUNING §4.6 item 2's CPU-for-latency rationale (Cribl S3
+    # destination's own default is likewise no compression for this format,
+    # unlike the Webhook destination's compress-on default — see outputs.yml
+    # to_agg_t1 comment above).
     compress: none
     # CONTROLLED CONSTANT (PLAN §4.5): 5 s flush, 10 MB max — identical to the
-    # Vector aws_s3 sink batch.timeout_secs=5 / max_bytes=10MB.
+    # Vector aws_s3 sink batch.timeout_secs=5 / max_bytes=10MB. DO NOT CHANGE
+    # — not a §4.6 tuning knob.
     maxFileSizeMB: 10
     maxFileOpenTimeSec: {{ cribl_edge_s3_flush_secs }}
     maxFileIdleTimeSec: {{ cribl_edge_s3_flush_secs }}
+    # TUNING §4.6 item 3 note: the S3 destination's local file staging (the
+    # maxFileOpenTimeSec/maxFileIdleTimeSec-governed active file) is a
+    # DIFFERENT mechanism from an in-memory event buffer (it is how Cribl's
+    # S3 destination assembles an object to PutObject, not a queue that
+    # could "block" or "drop"). There is no separate in-memory-vs-disk
+    # buffer toggle to set on this destination type the way there is on
+    # Webhook (Persistent Queue) — recorded in docs/TUNING.md as "no
+    # additional buffer knob applicable to the S3 destination type."
 {% endif %}

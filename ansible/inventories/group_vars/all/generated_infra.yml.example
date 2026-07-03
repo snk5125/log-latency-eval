@@ -23,4 +23,9 @@ cribl_edge_landing_bucket: "llt-landing-cs-111111111111"
 cribl_agg_t2_nlb: "llt-cs-t2-nlb-0def456.elb.us-east-2.amazonaws.com"
 cribl_final_bucket: "llt-final-111111111111"
 cribl_landing_sqs_url: "https://sqs.us-east-2.amazonaws.com/111111111111/llt-landing-cs-q"
-cribl_leader_host: "10.20.1.50"
+# Leader's private IP (logging-account VPC) — workers join it on the
+# distributed port (cribl_dist_port, 4200) and the leader's own REST API is
+# reached at this address on cribl_api_port (9000) for commit+deploy calls
+# (role cribl-leader, C5). Var name is load-bearing — referenced directly by
+# roles/cribl-worker and roles/cribl-leader.
+cribl_leader_private_ip: "10.20.1.50"

@@ -7,11 +7,6 @@ variable "name_prefix" {
   type        = string
 }
 
-variable "sender_account_id" {
-  description = "SENDER account ID (owns the generator-host role)."
-  type        = string
-}
-
 variable "logging_account_id" {
   description = "LOGGING account ID (owns the aggregator role; used to build SQS queue ARNs)."
   type        = string

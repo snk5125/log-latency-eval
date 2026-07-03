@@ -30,6 +30,10 @@
 - name: Assert Linux clock discipline (chrony) and record evidence
   hosts: os_linux
   gather_facts: true
+  # aws_ssm connects as ssm-user, not root (C1) — chronyc tracking is
+  # read-only and doesn't strictly need root, but keep parity with the rest
+  # of the Linux estate and avoid surprise permission edge cases.
+  become: true
   vars:
     ansible_connection: aws_ssm
     ansible_shell_type: sh
@@ -96,6 +100,9 @@
       delegate_to: localhost
       # Delegate the file write to the control node so we can push it to S3 with
       # a single profile-aware aws_s3 call (below), independent of host OS.
+      # become: true is set at play level for the SSM-connected host (C1); this
+      # task runs on the CONTROL node instead, so explicitly stay unprivileged.
+      become: false
 
     - name: Upload Linux clock evidence to artifacts S3 bucket (PLAN §5.3)
       amazon.aws.s3_object:
@@ -108,6 +115,7 @@
       delegate_to: localhost
       # Bucket lives in the logging account (PLAN §4.3), so use the logging
       # profile for the PutObject, not the host's SSM session profile.
+      become: false
 
     - name: Fail the run now if this host's clock assertion failed
       ansible.builtin.assert:
@@ -124,6 +132,7 @@
 - name: Assert Windows clock discipline (w32tm) and record evidence
   hosts: os_windows
   gather_facts: true
+  # Windows aws_ssm sessions already run as SYSTEM — no become (stays become-free).
   vars:
     ansible_connection: aws_ssm
     ansible_shell_type: powershell
@@ -139,15 +148,37 @@
         /samples:5 /dataonly
       register: w32tm_strip
       changed_when: false
+      failed_when: false
       # Read-only probe; /dataonly suppresses the ASCII chart, leaving parseable
-      # "<time>, <offset>s" rows.
+      # "<time>, <offset>s" rows. m3: failed_when:false so a probe hiccup
+      # (e.g. transient network blip to the time source) surfaces as an
+      # explicit empty-samples assertion below rather than aborting before we
+      # can record ANY evidence for this host.
 
     - name: Extract all sample offsets (seconds) from stripchart output
       ansible.builtin.set_fact:
         # Each data row ends with an offset like "+00.0012345s". Grab all of them.
         _win_offsets_sec: >-
           {{ w32tm_strip.stdout
+             | default('')
              | regex_findall('([+-][0-9]+\.[0-9]+)s') }}
+
+    - name: Assert the stripchart yielded at least one parseable sample (m3)
+      ansible.builtin.assert:
+        that:
+          - (_win_offsets_sec | length) > 0
+        fail_msg: >-
+          w32tm stripchart on {{ inventory_hostname }} produced ZERO parseable
+          offset samples (command may have failed, or output format did not
+          match — raw stdout: {{ w32tm_strip.stdout | default('<empty>') }}).
+          Cannot compute max|offset| — aborting before the `max` filter would
+          raise on an empty sequence.
+      # m3 fix: previously `max | default(0.0)` was expected to cover the
+      # empty-sample case, but Jinja2's `max` filter raises on an empty
+      # sequence BEFORE `default()` gets a chance to substitute — `default()`
+      # only catches Undefined, not a raised error mid-pipeline. This explicit
+      # length guard turns that opaque template-evaluation crash into a clear,
+      # actionable assertion failure with the raw output attached.
 
     - name: Compute max absolute Windows offset in milliseconds
       ansible.builtin.set_fact:

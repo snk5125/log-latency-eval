@@ -1,16 +1,21 @@
 # {{ ansible_managed }}
-# Cribl Edge pipeline — Eval function adds hop_ts.agent (ms epoch).
+# Cribl Edge pipeline "stamp_agent" — Eval function adds hop_ts.agent (ms epoch).
 # PARITY: field name hop_ts.agent is IDENTICAL to the Vector VRL remap and is
 # LOAD-BEARING for analysis (PLAN §5.1). Cribl _time is seconds; we write ms to
 # match the Vector to_unix_timestamp(..., "milliseconds") output exactly.
-pipelines:
-  stamp_agent:
+#
+# C4 SHAPE: this file is rendered to
+# $CRIBL_HOME/local/cribl/pipelines/stamp_agent/conf.yml (Linux; see
+# cribl_edge_local_linux in defaults/main.yml for the exact root) — the
+# pipeline id comes from the DIRECTORY name, so the conf body is the
+# functions list directly, with NO `pipelines: <id>: conf:` wrapper (that
+# wrapper is not a shape Cribl's pipeline conf.yml loader recognizes).
+functions:
+  - id: eval
+    filter: "true"
     conf:
-      functions:
-        - id: eval
-          filter: "true"
-          conf:
-            add:
-              # Date.now() is JS epoch milliseconds — same unit as Vector's ms.
-              - name: hop_ts.agent
-                value: Date.now()
+      add:
+        # Date.now() is JS epoch milliseconds — same unit as Vector's ms.
+        - name: hop_ts.agent
+          value: Date.now()
+groups: {}

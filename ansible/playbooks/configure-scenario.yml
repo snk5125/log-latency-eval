@@ -55,9 +55,13 @@
 - name: Re-template event generator config for this run
   hosts: role_generator
   gather_facts: true
+  # Mixed OS play: aws_ssm connects as ssm-user on Linux (C1) but as SYSTEM on
+  # Windows, so escalate only for Linux group members. group_names-keyed (M9)
+  # rather than gathered facts, so this is stable mid-matrix.
+  become: "{{ 'os_linux' in group_names }}"
   vars:
     ansible_connection: aws_ssm
-    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_shell_type: "{{ 'powershell' if 'os_windows' in group_names else 'sh' }}"
     ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
@@ -77,9 +81,11 @@
 - name: Re-template Vector agent config for this scenario
   hosts: role_generator
   gather_facts: true
+  # Mixed OS play — see become rationale above (C1/M9).
+  become: "{{ 'os_linux' in group_names }}"
   vars:
     ansible_connection: aws_ssm
-    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_shell_type: "{{ 'powershell' if 'os_windows' in group_names else 'sh' }}"
     ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
@@ -96,9 +102,11 @@
 - name: Re-template Cribl Edge config for this scenario
   hosts: role_generator
   gather_facts: true
+  # Mixed OS play — see become rationale above (C1/M9).
+  become: "{{ 'os_linux' in group_names }}"
   vars:
     ansible_connection: aws_ssm
-    ansible_shell_type: "{{ 'powershell' if ansible_os_family == 'Windows' else 'sh' }}"
+    ansible_shell_type: "{{ 'powershell' if 'os_windows' in group_names else 'sh' }}"
     ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
@@ -118,6 +126,8 @@
 - name: Re-template Vector aggregator config for this scenario
   hosts: role_agg_t1:role_agg_t2
   gather_facts: true
+  # Aggregator fleet is Linux-only (PLAN §4.3) — plain become (C1).
+  become: true
   vars:
     ansible_connection: aws_ssm
     ansible_shell_type: sh
@@ -134,9 +144,18 @@
         - llt_stack == 'vector'
 
 # Cribl Stream aggregator path (aggregator=cs) — worker groups t1/t2.
-- name: Re-template Cribl worker config for this scenario
-  hosts: role_agg_t1:role_agg_t2
+# C5 RETARGET: this play now runs on the LEADER, not the workers. Workers are
+# leader-managed in distributed mode — templating directly onto a worker's own
+# groups/<g>/local/cribl/ would be silently clobbered on the next commit+
+# deploy, so the leader is the only host that may own this config. The leader
+# templates BOTH groups' data-plane config (t1 and t2 — a single cell's
+# scenario switch affects both tiers) and commits+deploys each via its REST
+# API (cribl-leader role, tasks/configure.yml, looped per group).
+- name: Re-template Cribl worker-group config on the leader for this scenario
+  hosts: role_leader
   gather_facts: true
+  # Leader host is Linux-only (PLAN §4.3) — plain become (C1).
+  become: true
   vars:
     ansible_connection: aws_ssm
     ansible_shell_type: sh
@@ -144,10 +163,13 @@
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
   tasks:
-    - name: Re-template Cribl worker config + restart
+    - name: Re-template + commit + deploy each worker group's config
       ansible.builtin.include_role:
-        name: cribl-worker
+        name: cribl-leader
         tasks_from: configure.yml
+      loop: "{{ cribl_worker_groups }}"
+      loop_control:
+        loop_var: _group
       when:
         - aggregator == 'cs'
         - llt_stack == 'cribl'

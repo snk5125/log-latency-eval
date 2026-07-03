@@ -87,6 +87,10 @@ batching is a controlled constant: **5 s timeout / 10 MB max** at →S3 hops,
 **1 s** on inter-aggregator HTTP sinks (`PLAN.md` §4.5). Full detail in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+**Diagrams:** rendered network topology, per-scenario sequence diagrams, and
+the per-hop measurement derivation live in
+[`docs/diagrams/`](docs/diagrams/) (Mermaid source + SVG; `PLAN.md` §5A).
+
 ## Prerequisites
 
 - **AWS: two accounts, two named CLI profiles** — one for the sender account,
@@ -99,7 +103,7 @@ batching is a controlled constant: **5 s timeout / 10 MB max** at →S3 hops,
 - **AWS CLI v2** configured with both profiles; **Session Manager plugin**.
 - **Python** ≥ 3.11 for the harness (`boto3`; generator runs on Linux and
   Windows Python).
-- Sufficient account quotas for ~14 EC2 instances plus 4 internal NLBs, VPC
+- Sufficient account quotas for 13 EC2 instances plus 4 internal NLBs, VPC
   endpoints, and 2 VPC endpoint services across two accounts.
 
 ### Cost warning (ESTIMATE — verify against current AWS pricing)
@@ -109,7 +113,7 @@ batching is a controlled constant: **5 s timeout / 10 MB max** at →S3 hops,
 > and are **not a quote.** Verify every line against current AWS pricing for
 > your region before deploying, and always run `scripts/teardown.sh` when done.
 
-Instance inventory from `PLAN.md` §4 (14 EC2 instances):
+Instance inventory from `PLAN.md` §4 (13 EC2 instances):
 
 | Count | Type | Role | Account |
 |------:|------|------|---------|
@@ -117,16 +121,15 @@ Instance inventory from `PLAN.md` §4 (14 EC2 instances):
 | 4 | `m6i.xlarge` | Vector aggregator T1+T2 | logging |
 | 1 | `m6i.large` | Cribl Stream leader | logging |
 | 4 | `m6i.xlarge` | Cribl Stream workers T1+T2 | logging |
-| 1 | `m6i.large` | (spare/leader accounting per §4.3) | logging |
 
 [Unverified] Using representative on-demand `us-east-2` Linux rates in the
 neighborhood of ~$0.096/hr (`m6i.large`) and ~$0.192/hr (`m6i.xlarge`), the EC2
 compute alone is roughly:
 
-- `m6i.large` × 6 ≈ **~$0.58/hr** (Windows instances carry an additional
+- `m6i.large` × 5 ≈ **~$0.48/hr** (Windows instances carry an additional
   per-hour OS license fee not included here)
 - `m6i.xlarge` × 8 ≈ **~$1.54/hr**
-- **EC2 compute subtotal ≈ ~$2.1/hr** *(estimate; Linux-rate basis)*
+- **EC2 compute subtotal ≈ ~$2.0/hr** *(estimate; Linux-rate basis)*
 
 [Unverified] **Not included in that subtotal** and materially additive: Windows
 Server per-hour licensing on the 2 Windows generators, 4 internal Network Load
@@ -183,6 +186,9 @@ latency-testing/
   tiers, batch constants, measurement methodology, caveats). Source of truth.
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — detailed component
   walkthrough and the four scenario data paths with per-hop timestamp capture.
+- **[`docs/diagrams/`](docs/diagrams/)** — evidence-grade Mermaid + SVG
+  diagrams: two-account topology, one sequence diagram per scenario (S1–S4),
+  and the per-hop measurement derivation (`PLAN.md` §5A).
 - **[`docs/RUNBOOK.md`](docs/RUNBOOK.md)** — deploy → verify → run → collect →
   analyze → teardown, with failure modes.
 - **[`report/REPORT.md`](report/REPORT.md)** — the formal engineering report

@@ -44,7 +44,10 @@ keyed_groups:
     separator: _
 
 compose:
-  llt_role: tags.Role | default('') | lower
+  # NOTE: llt_role MUST match the underscore form used by keyed_groups above
+  # (agg_t1/agg_t2, not agg-t1/agg-t2) — role templates compare
+  # `llt_role == 'agg_t1'` etc. (C2 fix).
+  llt_role: tags.Role | default('') | lower | replace('-', '_')
   llt_stack: tags.Stack | default('') | lower
   llt_os: tags.Os | default('') | lower
   llt_private_ip: private_ip_address

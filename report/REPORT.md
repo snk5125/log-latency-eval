@@ -43,6 +43,11 @@ source, not only end-to-end (`PLAN.md` §1).
 | S3 | Host → S3 (landing) → Aggregator → S3 (final) |
 | S4 | Host → S3 (landing) → Aggregator-T1 → Aggregator-T2 → S3 (final) |
 
+**Diagrams:** evidence-grade network topology, one sequence diagram per
+scenario with timestamp capture points labeled, and the per-hop measurement
+derivation are in [`../docs/diagrams/`](../docs/diagrams/) (Mermaid + SVG;
+`PLAN.md` §5A).
+
 ---
 
 ## 3. Methodology
@@ -98,8 +103,11 @@ NDJSON, ~512 bytes padded:
   transform layer (Vector VRL `remap`; Cribl Eval function): `hop_ts.agent`,
   `hop_ts.agg1`, `hop_ts.agg2` — **ms precision (tool-native)**.
 - S3 hops are timestamped from the object's PutObject time (landing and final),
-  retrieved at analysis time, using SQS/S3 event `eventTime` (ms) where
-  available in preference to second-precision `LastModified`.
+  retrieved at analysis time. The analyzer prefers an `x-amz-meta-llt-put-ms`
+  object-metadata header (ms) where a sink sets it, and otherwise falls back to
+  second-precision `LastModified`. **No sink currently writes that metadata, so
+  `LastModified` is the operative source today** — see §7 caveats and the
+  batch-adjusted deltas below.
 
 ### 3.4 Per-Hop Latency Derivation (`PLAN.md` §5.2)
 
@@ -134,6 +142,55 @@ defend it under peer review.
   disabled on internal hops.
 - **Batch settings (identical across both tools):** →S3 sinks batch **timeout
   5 s, max 10 MB**; inter-aggregator HTTP sinks batch **timeout 1 s**.
+
+### 3.8 Tuning Profile (`PLAN.md` §4.6)
+
+Both stacks are tuned for the **lowest achievable delivery latency within
+the experiment's constraints** (§3.7's wire-protocol/batch constants,
+instance types/counts, the two-account PrivateLink topology, and ports/
+`hop_ts.*` field names are never touched by tuning). The **parity rule**
+governs every tuning action: any knob turned on one stack must have its
+documented equivalent turned on the other stack, or be explicitly recorded
+as having no equivalent (see the parity ledger below). `docs/TUNING.md` is
+the **source of truth** for this profile — this subsection is a mirror,
+kept consistent with it at build time; if the two ever disagree,
+`docs/TUNING.md` governs. The "Performance gain" column below is the
+vendor-documented expectation **[Unverified]** at build time; it is
+populated with measured A/B run evidence during the analysis phase (§8
+phase 4) and the marker is removed only once real data supports the figure
+— no unmeasured gain is stated as fact anywhere in this report.
+
+**Parity ledger — knobs with no equivalent on the other stack:**
+
+| # | Item | Stack lacking the equivalent | Why |
+|---|------|-------------------------------|-----|
+| 2 | HTTP client keep-alive / connection-reuse **config key** | Vector | No explicit config key in Vector 0.49's `http` sink (connection reuse is automatic/non-configurable); Cribl's Webhook destination has an explicit "Keep alive" toggle (default ON, 120 s). |
+| 2 | Request-concurrency **mechanism** (adaptive algorithm vs. static cap) | Cribl | Vector's `request.concurrency: adaptive` is a live-adaptive algorithm; Cribl's Webhook "Request concurrency" is a fixed integer ceiling (raised to its documented max, 32). Both reach "concurrency allowed to scale" in intent, by different mechanisms. |
+| 1 | File-open/poll-interval **minimum** value | Cribl Edge vs. Vector | Vector's `glob_minimum_cooldown_ms` floored 100x below its 1000 ms default (to 10 ms); Cribl's File Monitor "Polling interval" floored only 10x below its 10 s default (to 1 s) — no documented minimum was found for either, so exact floor-parity is not asserted. |
+| 5 | Thread/process-count **mechanism** | N/A (symmetric outcome, asymmetric mechanism) | Vector has no "process count" — a single process uses all cores implicitly (`--threads` default = core count). Cribl runs N separate OS processes per node (`workerProcesses` set to 4 = vCPU count on `m6i.xlarge`). Both reach full vCPU utilization by different named settings. |
+
+**Tuning table** — full detail (every row, per-stack, with file+line
+citations and per-item rationale) lives in
+[`../docs/TUNING.md`](../docs/TUNING.md) §4. Summary by item:
+
+| Item | Vector setting(s) | Cribl setting(s) | Status |
+|------|--------------------|--------------------|--------|
+| 1. Agent file pickup | `glob_minimum_cooldown_ms: 10` (from 1000 default); `read_from: beginning` (latency-neutral decision — file is truncated fresh every run, see `docs/TUNING.md` §4 item 1 for the full eventgen.py/run_matrix.py evidence chain); no `multiline.*` configured | File Monitor poll floored to 1 s (from 10 s default); `mode: manual` read-from-start (same latency-neutral decision); default line-based Event Breaker, no multiline join | Tuned (both) |
+| 2. HTTP sinks | `compression: none`, `request.concurrency: adaptive`, retry backoff 1 s/30 s — all also Vector's own defaults, kept explicit | `compress: none` (**active change** — Cribl Webhook defaults compression ON), `concurrency: 32` (from default 5) | Tuned (both); compression is an active change on Cribl only, record-of-default on Vector |
+| 3. Buffers | `buffer.type: memory`, `buffer.when_full: block` (also Vector defaults), `max_events: 100000` (from 500 default) | Persistent Queue OFF / Backpressure `Block` (unchanged defaults — already in-memory-only, block-not-drop) | Tuned (Vector sizing is active; Cribl is a kept/verified default) |
+| 4. S3-source pickup | `sqs.poll_secs: 20` (from 15 default) | S3 source "Poll timeout (secs)": `20` (from 10 default, max 20) | Tuned (both, symmetric — both raised to the 20 s SQS ceiling) |
+| 5. Process/thread scaling | All cores (Vector default, unchanged — record only) | `workerProcesses: 4` (= vCPU count on `m6i.xlarge`, from Cribl's documented `-2` default) | Vector record-only; Cribl active change |
+| 6. NLBs | Cross-zone LB ON + deregistration delay 30 s — **DONE IN TERRAFORM** (`terraform/modules/vector-aggregator/main.tf`) | Same, **DONE IN TERRAFORM** (`terraform/modules/cribl-stream/main.tf`), identical values | Record only (terraform); client-keep-alive-vs-NLB-idle-timeout has no config knob on either stack (NLB idle timeout default 350 s, not a practical risk at 10k EPS) |
+| 7. Placement | Same 2 AZs, zone-ID selection — **DONE IN TERRAFORM** | Same | Constraint only; single-AZ pinning is further-evaluation work (`PLAN.md` §5.4.5) |
+| 8. OS/network | ENA (AWS default), MTU 9001 (unchanged), unattended upgrades disabled (`common` role), gp3 generator volume (terraform) | Same (shared `common` role + shared terraform) | Record only — no per-stack asymmetry |
+
+Several exact Cribl 4.13 JSON config keys could not be confirmed against a
+live instance or an exposed schema page at build time (UI-label-only
+documentation was available); each has an in-config `TODO(verify)` comment
+and is listed in `docs/TUNING.md` §6 rather than silently guessed. This does
+not affect the §3.7 controlled constants, ports, or `hop_ts.*` field names,
+which were independently re-verified by grep after every tuning edit (see
+`docs/TUNING.md` §5 for the grep evidence).
 
 ---
 
@@ -183,9 +240,13 @@ result in §7.
    hops; deltas smaller than the precision floor are not distinguishable from
    zero.
 3. **S3 object time precision** (`PLAN.md` §5.4 item 3). `LastModified` is
-   second-precision. Analysis uses SQS/S3 event notification `eventTime` (ms)
-   where available; where only `LastModified` is available, the S3-hop delta
-   carries second-level quantization.
+   second-precision. The analyzer prefers a ms-precision `x-amz-meta-llt-put-ms`
+   object-metadata header where a sink writes it, and otherwise uses
+   `LastModified`. **No sink currently writes that header, so every S3-hop delta
+   carries second-level quantization today**; this is why `→S3` hops are
+   reported both raw and batch-adjusted (the 5 s flush dominates regardless). If
+   a sink is later configured to stamp `x-amz-meta-llt-put-ms`, the analyzer
+   upgrades to ms precision automatically with no code change.
 4. **Coarser Windows time sync** (`PLAN.md` §5.4 item 4). Windows time sync
    (w32time, 64 s poll floor) is coarser than chrony. Windows deltas carry
    **wider error bars** than Linux and should not be compared to Linux deltas at

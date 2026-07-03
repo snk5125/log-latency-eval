@@ -1,10 +1,13 @@
 # {{ ansible_managed }}
 # Cribl Edge route — wire the file source through the stamp_agent pipeline to the
 # scenario destination. One route, catch-all filter (single event stream).
+#
+# C4 SHAPE: top-level `routes:` is a LIST (not a dict wrapping a second
+# `routes:` key) — each entry is {id, name, filter, pipeline, output, final}.
 routes:
-  routes:
-    - name: llt_main
-      filter: "true"
-      pipeline: stamp_agent
-      output: "{{ 'to_agg_t1' if scenario in ['s1', 's2'] else 'to_landing_s3' }}"
-      final: true
+  - id: llt_main
+    name: llt_main
+    filter: "true"
+    pipeline: stamp_agent
+    output: "{{ 'to_agg_t1' if scenario in ['s1', 's2'] else 'to_landing_s3' }}"
+    final: true

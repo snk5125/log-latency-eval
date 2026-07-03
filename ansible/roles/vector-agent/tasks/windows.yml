@@ -9,17 +9,39 @@
   loop:
     - "{{ vector_dir_win }}"
     - C:\ProgramData\Vector
+    # data_dir (M1): Vector's disk-buffer/checkpoint state dir referenced by
+    # vector.yaml.j2 `data_dir:` (rendered as C:/ProgramData/Vector/data).
+    - C:\ProgramData\Vector\data
+    # Staging dir for the zip extraction (M2 below).
+    - C:\llt\vector-staging
 
 - name: Download pinned Vector zip (Windows)
   ansible.windows.win_get_url:
     url: "{{ vector_download_base }}/vector-{{ vector_version }}-{{ vector_win_arch }}.zip"
     dest: "C:\\llt\\vector-{{ vector_version }}.zip"
 
-- name: Unzip Vector (Windows)
+- name: Unzip Vector to staging dir (Windows)
   community.windows.win_unzip:
     src: "C:\\llt\\vector-{{ vector_version }}.zip"
-    dest: "{{ vector_dir_win }}"
-    # zip contains a vector-x86_64.../ top dir; binary ends up under bin\.
+    dest: "C:\\llt\\vector-staging"
+    # M2: the archive's top-level entry is a `vector-{{ vector_win_arch }}/`
+    # directory (e.g. vector-x86_64-pc-windows-msvc/bin/vector.exe). Extract
+    # to a staging dir first, then move the INNER contents up so the binary
+    # ends up at {{ vector_dir_win }}\bin\vector.exe as every downstream task
+    # (version-evidence, NSSM) expects.
+
+- name: Check whether Vector is already installed at the target dir (idempotency guard)
+  ansible.windows.win_stat:
+    path: "{{ vector_dir_win }}\\bin\\vector.exe"
+  register: _vector_bin_stat
+
+- name: Move extracted Vector contents up from the nested archive dir (Windows, M2)
+  ansible.windows.win_shell: >-
+    Move-Item -Path "C:\llt\vector-staging\vector-{{ vector_win_arch }}\*"
+    -Destination "{{ vector_dir_win }}" -Force
+  args:
+    creates: "{{ vector_dir_win }}\\bin\\vector.exe"
+  when: not _vector_bin_stat.stat.exists
 
 - name: Record exact deployed Vector version as evidence (Windows)
   ansible.windows.win_shell: '& "{{ vector_dir_win }}\bin\vector.exe" --version'

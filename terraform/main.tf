@@ -51,7 +51,6 @@ module "iam" {
   }
 
   name_prefix        = "llt"
-  sender_account_id  = var.sender_account_id
   logging_account_id = var.logging_account_id
 
   # Bucket ARNs the roles are scoped to are produced by s3-buckets; passing the

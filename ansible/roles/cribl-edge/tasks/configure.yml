@@ -7,11 +7,21 @@
 # source, Eval adds hop_ts.agent, HTTP(S1/S2) or S3(S3/S4) destination.
 ---
 # --- Linux ------------------------------------------------------------------
+# C4 file layout (verified): standalone Cribl Edge config lives under
+# $CRIBL_HOME/local/cribl/. inputs.yml and outputs.yml are direct children of
+# that dir (already correct). Routes and pipeline confs live one level deeper,
+# under pipelines/: local/cribl/pipelines/route.yml and
+# local/cribl/pipelines/<pipeline_id>/conf.yml — so the stamp_agent pipeline
+# needs its OWN subdirectory.
 - name: Ensure inputs/outputs/pipelines dirs exist (Linux)
   ansible.builtin.file:
-    path: "{{ cribl_edge_local_linux }}"
+    path: "{{ item }}"
     state: directory
     mode: "0755"
+  loop:
+    - "{{ cribl_edge_local_linux }}"
+    - "{{ cribl_edge_local_linux }}/pipelines"
+    - "{{ cribl_edge_local_linux }}/pipelines/stamp_agent"
   when: ansible_os_family != "Windows"
 
 - name: Template Cribl Edge inputs.yml (file monitor source) (Linux)
@@ -22,10 +32,10 @@
   when: ansible_os_family != "Windows"
   notify: Restart cribl edge (linux)
 
-- name: Template Cribl Edge pipelines (Eval adds hop_ts.agent) (Linux)
+- name: Template Cribl Edge stamp_agent pipeline conf (Eval adds hop_ts.agent) (Linux)
   ansible.builtin.template:
     src: pipelines.yml.j2
-    dest: "{{ cribl_edge_local_linux }}/pipelines.yml"
+    dest: "{{ cribl_edge_local_linux }}/pipelines/stamp_agent/conf.yml"
     mode: "0644"
   when: ansible_os_family != "Windows"
   notify: Restart cribl edge (linux)
@@ -38,15 +48,25 @@
   when: ansible_os_family != "Windows"
   notify: Restart cribl edge (linux)
 
-- name: Template Cribl Edge route (source->pipeline->dest) (Linux)
+- name: Template Cribl Edge route.yml (source->pipeline->dest) (Linux)
   ansible.builtin.template:
     src: route.yml.j2
-    dest: "{{ cribl_edge_local_linux }}/route.yml"
+    dest: "{{ cribl_edge_local_linux }}/pipelines/route.yml"
     mode: "0644"
   when: ansible_os_family != "Windows"
   notify: Restart cribl edge (linux)
 
 # --- Windows ----------------------------------------------------------------
+- name: Ensure inputs/outputs/pipelines dirs exist (Windows)
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ cribl_edge_local_win }}"
+    - "{{ cribl_edge_local_win }}\\pipelines"
+    - "{{ cribl_edge_local_win }}\\pipelines\\stamp_agent"
+  when: ansible_os_family == "Windows"
+
 - name: Template Cribl Edge inputs.yml (Windows)
   ansible.windows.win_template:
     src: inputs.yml.j2
@@ -54,10 +74,10 @@
   when: ansible_os_family == "Windows"
   notify: Restart cribl edge (windows)
 
-- name: Template Cribl Edge pipelines.yml (Windows)
+- name: Template Cribl Edge stamp_agent pipeline conf (Windows)
   ansible.windows.win_template:
     src: pipelines.yml.j2
-    dest: "{{ cribl_edge_local_win }}\\pipelines.yml"
+    dest: "{{ cribl_edge_local_win }}\\pipelines\\stamp_agent\\conf.yml"
   when: ansible_os_family == "Windows"
   notify: Restart cribl edge (windows)
 
@@ -71,7 +91,7 @@
 - name: Template Cribl Edge route.yml (Windows)
   ansible.windows.win_template:
     src: route.yml.j2
-    dest: "{{ cribl_edge_local_win }}\\route.yml"
+    dest: "{{ cribl_edge_local_win }}\\pipelines\\route.yml"
   when: ansible_os_family == "Windows"
   notify: Restart cribl edge (windows)
 

@@ -10,6 +10,9 @@
   loop:
     - "{{ vector_dir_linux }}"
     - /etc/vector
+    # data_dir (M1): Vector's disk-buffer/checkpoint state dir referenced by
+    # vector.yaml.j2 `data_dir:`. Vector will not create this itself.
+    - /var/lib/vector
 
 - name: Download pinned Vector tarball (Linux)
   ansible.builtin.get_url:

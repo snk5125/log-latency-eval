@@ -4,10 +4,57 @@
 inputs:
   gen_file:
     type: file
-    # Monitor the same NDJSON output file the generator writes.
+    # Monitor the same NDJSON output file the generator writes. C11: forward
+    # slashes only — this path is rendered into config CONTENT, not consumed
+    # by a win_* module; backslashes inside the double-quoted scalar produce
+    # illegal escapes and Cribl's JSON/YAML config loader rejects the file.
     filenames:
-      - "{{ cribl_edge_source_path_win if ansible_os_family == 'Windows' else cribl_edge_source_path_linux }}"
-    mode: replay        # read from beginning so warm-up is captured (windowed later)
+      - "{{ cribl_edge_source_path_win_fwd if ansible_os_family == 'Windows' else cribl_edge_source_path_linux }}"
+    # mode: replay is INVALID for the Cribl 4.13 file input (C7-adjacent fix,
+    # tracked as M6) — valid values are `manual` (read once per idleTimeout
+    # cycle / on rotation) or `tail`. `manual` + read-from-start below mirrors
+    # Vector's read_from: beginning (warm-up captured, windowed out later).
+    #
+    # TUNING §4.6 item 1 — read-from-beginning DECISION: identical rationale
+    # to vector-agent/templates/vector.yaml.j2's gen_file source comment —
+    # eventgen.py's RotatingWriter truncates this file to empty (mode="w")
+    # every time the generator process starts, and the orchestrator starts
+    # the generator (harness/orchestrator/run_matrix.py execute_cell phase 3)
+    # only AFTER this agent is already installed/running/watching (this
+    # role's configure.yml only re-templates+restarts on scenario changes,
+    # never starts the agent per-run). "Manual read from start" of a
+    # freshly-truncated file is therefore latency-neutral vs. "read from
+    # end" — there is no stale data to skip. See the Vector comment for the
+    # full chain of evidence (eventgen.py + run_matrix.py).
+    mode: manual
     idleTimeout: 30
-    # Each line is one NDJSON event (PLAN §5.1); no line-breaker merging.
-    breakerRulesets: []
+    # TUNING §4.6 item 1 — poll interval floored. Cribl's File Monitor
+    # "Polling interval" (the discovery-loop cadence for detecting file
+    # create/rotate/truncate events) defaults to 10 s
+    # (docs.cribl.io/stream/sources-file-monitor/); floored to
+    # cribl_edge_poll_interval_secs (1 s, defaults/main.yml) — the parity
+    # counterpart to Vector's glob_minimum_cooldown_ms floor. TODO(verify):
+    # could not confirm the exact underlying JSON key name against the live
+    # 4.13 schema (docs.cribl.io/stream/inputsyml/'s File Monitor section did
+    # not render a JSON/YAML example in available fetches, and the schema
+    # reference page 403'd). `servicePeriodSecs` is used BY ANALOGY to other
+    # Cribl collector-style inputs' polling-interval key naming convention
+    # (e.g. the Azure Blob input's servicePeriodSecs) — if this key name is
+    # wrong, Cribl will reject or silently ignore it; verify against
+    # $CRIBL_HOME/local/cribl/inputs.yml on a live node before first real
+    # deploy and correct here if needed.
+    servicePeriodSecs: {{ cribl_edge_poll_interval_secs }}
+    # No multiline: TUNING §4.6 item 1 — no multiline/aggregation setting is
+    # configured. The File Monitor source's default Event Breaker ("System
+    # Default Rule") already applies here via the explicit "JSON Newline
+    # Delimited" ruleset below, which is a LINE-based breaker (one event per
+    # NDJSON line, PLAN §5.1) — there is no additional multiline-join
+    # behavior layered on top.
+    #
+    # M6: assign the JSON Newline Delimited event breaker so each line is
+    # parsed into an event with TOP-LEVEL run_id/seq/host_id/host_os/t_gen_ns/
+    # hop_ts fields (analyze.py reads top-level fields). Without an explicit
+    # breaker ruleset, Cribl's default breaker leaves the whole line in _raw
+    # and the Eval in pipelines/stamp_agent can't see .hop_ts on the object.
+    breakerRulesets:
+      - "JSON Newline Delimited"
