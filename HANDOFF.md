@@ -52,6 +52,42 @@ dry-run, ports/batch/`hop_ts` unchanged, `cribl-stream` var seam
 (generated_infra + defaults) consistent, topology SVG re-rendered without the
 leader.
 
+**Session-3 changes (LIVE two-account deploy; 12 EC2 up, SSM-online):** the
+stack was deployed and converged against real AWS. Fixed the remaining
+generator-host converge failures and proved the pipeline end-to-end:
+- **Issue A (lin-ce cribl-edge):** `boot-start enable` in Edge mode creates the
+  unit `cribl-edge.service` (verified live), not `cribl` — fixed
+  `cribl_edge_service_name` + added an explicit start-with-daemon_reload task
+  (parity with cribl-stream). lin-ce now converges `failed=0`.
+- **Issue B (win-vec generator):** python locate returned empty because the
+  installer's PATH edit doesn't reach the open SSM session; made the locate
+  refresh the machine PATH + glob known dirs. Follow-ons surfaced by re-converge:
+  win_nssm couldn't find `nssm.exe` (same session-PATH staleness) → pin
+  `executable:` to the absolute path in event-generator + vector-agent; and that
+  var (`common_win_nssm_exe`) was out of scope in those plays → added it as a
+  role default in both.
+- **Issue C part 1 (win-ce facts):** the Windows `setup` module emits a stray
+  `\r` in `ansible_date_time.hour` over SSM, corrupting JSON framing →
+  "MODULE FAILURE" despite complete facts. Excluded `date_time` via
+  `gather_subset: [all, "!date_time"]` on all Windows-touching plays. Both
+  Windows hosts now pass fact-gather.
+- **Issue C part 2 (win-ce cribl-edge MSI):** EXTERNAL BLOCKER — see item 3
+  below. win-ce is the only host that cannot converge; it is not needed for the
+  smoke test or the Linux path.
+- **Converge result:** 10/12 hosts `failed=0` on the full run; the 2 Windows
+  failures were the nssm.exe issues, now fixed (re-converge pending to confirm
+  win-vec is fully green; win-ce remains blocked on the MSI only).
+- **SMOKE TEST — PIPELINE PROVEN (s1-vec-vagg, Linux):** ran the generator on
+  llt-lin-vec-01 (eps 1000, 10 s warmup + 60 s), Vector agent → vagg Tier-1 NLB
+  :8080 → final S3. The `final/` prefix of `llt-final-624627265315` went from
+  0 → 28 objects (~3.2 MB each). A real measurement event carried
+  `t_gen_ns: 1783132703549826294`, `hop_ts.agent: 1783132703552`,
+  `hop_ts.agg1: 1783132704563` (deltas: gen→agent 2.17 ms, agent→agg1 1011 ms).
+  `analyze.py` produced per-hop stats (gen→agent mean 1.15 ms; agent→agg1 mean
+  510 ms; agg_last→final adj_mean 0 ms after the 5 s flush subtraction;
+  end-to-end mean 3924 ms). Analysis + generator + agent + aggregator + S3 sink
+  all confirmed working on live infra.
+
 **⚠ DEPLOY-TIME TODOs (verify before first apply — could not be validated
 offline):**
 1. **Standalone Cribl Stream smoke-test** (low risk, but unverified against a
