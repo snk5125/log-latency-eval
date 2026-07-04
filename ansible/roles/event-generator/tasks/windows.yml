@@ -70,10 +70,16 @@
 - name: Install eventgen as an NSSM service (Windows)
   community.windows.win_nssm:
     name: "{{ eventgen_service_name }}"
+    executable: "{{ common_win_nssm_exe }}"
     application: "{{ (_win_python.stdout_lines | select('match', '.*python\\.exe$') | list | last) | trim }}"
     arguments: '"{{ eventgen_bin_win }}" --config "{{ eventgen_config_win }}"'
     state: present
     start_mode: manual
+  # executable: win_nssm shells out to `nssm.exe` by BARE NAME and finds it via
+  # PATH. Role common adds C:\llt\tools to the SYSTEM PATH, but that edit doesn't
+  # reach the already-open SSM session (same session-PATH-staleness as the python
+  # locate above), so the bare name fails with "Could not find file 'nssm.exe'".
+  # Point at the absolute staged path instead (== C:\llt\tools\nssm.exe).
   # start_mode: manual == not auto-start on boot; the orchestrator starts it
   # per-run via SSM (PLAN §4.2).
 

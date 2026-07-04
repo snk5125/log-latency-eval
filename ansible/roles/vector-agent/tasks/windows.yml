@@ -52,10 +52,16 @@
 - name: Install Vector as a Windows service via NSSM
   community.windows.win_nssm:
     name: "{{ vector_service_name }}"
+    executable: "{{ common_win_nssm_exe }}"
     application: "{{ vector_dir_win }}\\bin\\vector.exe"
     arguments: '--config "{{ vector_config_win }}"'
     state: present
     start_mode: auto
+  # executable: pin the absolute nssm.exe path — win_nssm otherwise resolves
+  # `nssm.exe` via PATH, but common's C:\llt\tools PATH edit doesn't reach the
+  # already-open SSM session (same session-PATH-staleness that breaks the
+  # generator's NSSM install). Fails with "Could not find file 'nssm.exe'"
+  # without this.
   # Vector agent runs continuously (unlike the generator); it is safe to auto
   # since it only forwards whatever the generator produces. It is restarted on
   # config change by configure.yml.
