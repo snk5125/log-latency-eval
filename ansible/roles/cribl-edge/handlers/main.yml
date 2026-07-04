@@ -10,6 +10,22 @@
   # Standalone Edge reloads local/ config on restart.
 
 - name: Restart cribl edge (windows)
-  ansible.windows.win_service:
-    name: "{{ cribl_edge_service_name }}"
-    state: restarted
+  # The Windows Cribl Edge service only exists if the MSI installed. On win-ce
+  # the MSI download is a documented external blocker (the vendor 404s the 4.18.2
+  # Windows MSI; see HANDOFF item 3), so the service is absent there. Restarting a
+  # non-existent service fails hard ("Service 'cribl-edge' is not installed, need
+  # to set 'path' to create a new service") and would abort configure-scenario in
+  # phase 1 for the ENTIRE Cribl cell — taking down the Linux Cribl path too.
+  # Guard the restart on the service actually existing so the documented win-ce
+  # blocker degrades to a no-op on that host instead of failing the cell.
+  block:
+    - name: Check whether the Cribl Edge Windows service exists
+      ansible.windows.win_service_info:
+        name: "{{ cribl_edge_service_name }}"
+      register: _cribl_edge_win_svc
+
+    - name: Restart Cribl Edge Windows service (only if installed)
+      ansible.windows.win_service:
+        name: "{{ cribl_edge_service_name }}"
+        state: restarted
+      when: _cribl_edge_win_svc.exists | default(false)
