@@ -132,7 +132,17 @@
 # assert it is < 5 ms (PLAN §5.3 — Windows sync is coarser than chrony).
 # -----------------------------------------------------------------------------
 - name: Assert Windows clock discipline (w32tm) and record evidence
-  hosts: os_windows
+  # EXCLUDE the Cribl-stack Windows host (win-ce) from the clock gate:
+  # `os_windows:!stack_cribl` resolves to win-vec only. WHY: win-ce's Cribl Edge
+  # is the documented external MSI blocker (HANDOFF item 3) — it can never
+  # forward events, so it CONTRIBUTES NO DATA to any run, yet its w32time clock
+  # chronically hovers near/over the 5 ms bound and re-slews slowly. Because
+  # assert-clocks gates a run on EVERY listed host, leaving win-ce in would let a
+  # host that produces zero measured data abort otherwise-valid cells. Gating
+  # only hosts whose timestamps actually enter the measurement is the correct
+  # scope. (If the win-ce MSI blocker is ever resolved and it starts
+  # contributing, drop this exclusion so its clock is disciplined again.)
+  hosts: "os_windows:!stack_cribl"
   gather_facts: true
   # Windows aws_ssm sessions already run as SYSTEM — no become (stays become-free).
   vars:

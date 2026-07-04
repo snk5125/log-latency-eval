@@ -83,6 +83,28 @@
   # start_mode: manual == not auto-start on boot; the orchestrator starts it
   # per-run via SSM (PLAN §4.2).
 
+- name: Stop NSSM from RESTARTING the generator after it self-exits (Windows)
+  ansible.windows.win_command:
+    argv:
+      - "{{ common_win_nssm_exe }}"
+      - set
+      - "{{ eventgen_service_name }}"
+      - AppExit
+      - Default
+      - Exit
+  changed_when: true
+  # eventgen.py runs for its configured duration and then EXITS. NSSM's DEFAULT
+  # AppExit action is "Restart", which relaunches the generator with the SAME
+  # run_id and SAME seq range (0..N) → a second (partial) generation before the
+  # orchestrator stops the service. Verified live on win-vec: 37k measurement
+  # seqs delivered twice, each copy with a DIFFERENT t_gen_ns and two generations
+  # ~110 s apart (NOT a transport re-send — that would share t_gen_ns). This
+  # silently doubled Windows-generator data. "AppExit Default Exit" makes NSSM
+  # STOP the service when the process exits instead of restarting it — matching
+  # the Linux systemd `Restart=no` behavior (exactly one generation per
+  # orchestrator-controlled window). Set here at converge time so it is baked
+  # into the service definition.
+
 - name: Ensure eventgen service is STOPPED (orchestrator-controlled)
   ansible.windows.win_service:
     name: "{{ eventgen_service_name }}"
