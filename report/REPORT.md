@@ -125,9 +125,17 @@ NDJSON, ~512 bytes padded:
 
 - **Linux:** chrony → AWS Time Sync (`169.254.169.123`).
 - **Windows:** w32time → AWS Time Sync, 64 s poll floor.
-- Ansible asserts sync before each run (chrony tracking offset **< 1 ms**;
-  `w32tm /query /status` stripchart bound **< 5 ms**) and records the values as
-  run evidence. Clock error bounds are reported as a stated constraint (§5).
+- Ansible asserts sync before each run (chrony tracking offset **< 1 ms** Linux;
+  `w32tm` stripchart bound **< 20 ms** Windows — relaxed from 5 ms, see below)
+  and records the values as run evidence. Clock error bounds are reported as a
+  stated constraint (§5).
+- **Windows bound relaxed 5 ms → 20 ms (execution-time deviation).** win-vec's
+  w32time empirically oscillated 5–8 ms under load (cells aborted at
+  5.05 / 7.17 / 8.02 ms) despite a healthy Amazon Time Sync source — Windows
+  w32time cannot hold 5 ms. Batched Windows hops stay valid at 20 ms; the sub-ms
+  Windows **gen→agent** hop is clock-noise-dominated and reported **INDICATIVE
+  ONLY**. The gate is participant-scoped (win-vec gates only vec cells; the
+  MSI-blocked win-ce is never gated). Linux keeps its **< 1 ms** bound.
 
 ### 3.6 Statistics Reported (`PLAN.md` §5.2)
 
@@ -267,7 +275,8 @@ result in §7.
    comparisons involving S3 hops must use the batch-adjusted figures to remain
    meaningful.
 9. **Clock-sync error bounds.** Reported hop deltas inherit the clock-sync error
-   bounds asserted per run (Linux offset < 1 ms; Windows stripchart < 5 ms;
+   bounds asserted per run (Linux offset < 1 ms; Windows stripchart < 20 ms —
+   relaxed from 5 ms, §3.5; sub-ms Windows gen→agent is indicative-only;
    `PLAN.md` §5.3). Any delta of comparable magnitude to these bounds is within
    measurement noise and is reported as such rather than as a signal.
 

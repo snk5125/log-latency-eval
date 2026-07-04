@@ -236,9 +236,18 @@ percentiles defend it under peer review.
 
 - Linux: chrony → AWS Time Sync (`169.254.169.123`).
 - Windows: w32time → AWS Time Sync, 64 s poll floor.
-- Ansible asserts sync before each run (chrony tracking offset < 1 ms; w32tm
-  /query /status stripchart bound < 5 ms) and records the values as run
-  evidence. Clock error bounds are reported as a stated constraint.
+- Ansible asserts sync before each run (chrony tracking offset < 1 ms Linux;
+  w32tm stripchart bound < 20 ms Windows — see deviation note) and records the
+  values as run evidence. Clock error bounds are reported as a stated constraint.
+- **Windows bound relaxed 5 ms → 20 ms (execution-time deviation, approved).**
+  The original 5 ms target proved empirically unachievable: win-vec's w32time
+  oscillated 5–8 ms under load (live: cells aborted at 5.05 / 7.17 / 8.02 ms)
+  despite a healthy Amazon Time Sync source — Windows w32time's poll/slew cadence
+  cannot hold 5 ms. Bound raised to 20 ms so batched Windows hops (agent→agg
+  ~500 ms) stay valid; the sub-ms Windows gen→agent hop is clock-noise-dominated
+  at 20 ms and is reported INDICATIVE ONLY. Linux keeps < 1 ms. The gate is also
+  participant-scoped: win-vec gates only agent=vec cells (it stamps nothing in
+  agent=ce cells); win-ce (MSI-blocked, zero measured data) is never gated.
 
 ### 5.4 Known caveats to document in the report
 
@@ -247,7 +256,9 @@ percentiles defend it under peer review.
 2. `hop_ts.*` are ms-precision (tool-native); sub-ms effects unresolvable there.
 3. PutObject `LastModified` is second-precision; analysis uses SQS/S3 event
    notification `eventTime` (ms) where available.
-4. Windows time sync is coarser than chrony; Windows deltas carry wider error bars.
+4. Windows time sync is coarser than chrony (w32time bound relaxed to 20 ms, §5.3);
+   Windows deltas carry wider error bars — the sub-ms Windows gen→agent hop is
+   indicative-only, while batched Windows hops remain valid.
 5. Variability areas NOT assessed (report section): native wire protocols, TLS
    overhead, compression, aggregator processing pipelines beyond timestamping,
    instance-type sensitivity, cross-AZ vs same-AZ placement, cross-region,
