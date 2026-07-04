@@ -38,19 +38,39 @@
     dest: "{{ eventgen_bin_win }}"
 
 - name: Locate python interpreter on Windows
-  ansible.windows.win_shell: (Get-Command python).Source
+  ansible.windows.win_shell: |
+    # Role common installs Python (M10) with PrependPath=1, but that PATH edit
+    # only affects processes started AFTER the installer ran — the already-open
+    # SSM PowerShell session that converge uses still has the OLD $env:Path, so
+    # a bare `Get-Command python` returns empty (verified live on i-0e394:
+    # python.exe exists at C:\Program Files\Python312 and is on the MACHINE PATH,
+    # but NOT on the session PATH). Refresh the session PATH from the machine
+    # scope first, then resolve; fall back to globbing the known install roots so
+    # the result is robust regardless of the pinned minor version / install dir.
+    $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+                [Environment]::GetEnvironmentVariable('Path','User')
+    $cmd = Get-Command python.exe -ErrorAction SilentlyContinue |
+             Select-Object -First 1 -ExpandProperty Source
+    if (-not $cmd) {
+      $cmd = Get-ChildItem -Path @(
+                 'C:\Program Files\Python3*\python.exe',
+                 'C:\Program Files (x86)\Python3*\python.exe',
+                 'C:\Python3*\python.exe',
+                 "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe"
+               ) -ErrorAction SilentlyContinue |
+               Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $cmd) { throw 'Could not locate python.exe on this Windows host' }
+    $cmd
   register: _win_python
   changed_when: false
-  # Python is installed during converge by role common (M10 — the stock
-  # WS2022 AMI ships with neither Python nor NSSM; common/tasks/windows.yml
-  # installs both with PrependPath=1, which is what makes `Get-Command
-  # python` resolve here). NSSM needs the absolute interpreter path to launch
-  # eventgen.py.
+  # NSSM needs the ABSOLUTE interpreter path to launch eventgen.py; the last
+  # line emitted above is that path.
 
 - name: Install eventgen as an NSSM service (Windows)
   community.windows.win_nssm:
     name: "{{ eventgen_service_name }}"
-    application: "{{ _win_python.stdout | trim }}"
+    application: "{{ (_win_python.stdout_lines | select('match', '.*python\\.exe$') | list | last) | trim }}"
     arguments: '"{{ eventgen_bin_win }}" --config "{{ eventgen_config_win }}"'
     state: present
     start_mode: manual
