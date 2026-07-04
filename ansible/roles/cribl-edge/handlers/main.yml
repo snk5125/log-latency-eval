@@ -16,16 +16,24 @@
   # non-existent service fails hard ("Service 'cribl-edge' is not installed, need
   # to set 'path' to create a new service") and would abort configure-scenario in
   # phase 1 for the ENTIRE Cribl cell — taking down the Linux Cribl path too.
-  # Guard the restart on the service actually existing so the documented win-ce
-  # blocker degrades to a no-op on that host instead of failing the cell.
-  block:
-    - name: Check whether the Cribl Edge Windows service exists
-      ansible.windows.win_service_info:
-        name: "{{ cribl_edge_service_name }}"
-      register: _cribl_edge_win_svc
-
-    - name: Restart Cribl Edge Windows service (only if installed)
-      ansible.windows.win_service:
-        name: "{{ cribl_edge_service_name }}"
-        state: restarted
-      when: _cribl_edge_win_svc.exists | default(false)
+  #
+  # THIS MUST BE A SINGLE TASK, NOT A `block:`. A handler defined as a `block:`
+  # is NOT registered as a notifiable name in Ansible — `notify: Restart cribl
+  # edge (windows)` then fails with "handler ... was not found in either the main
+  # handlers list nor in the listening handlers list", which aborted phase 1 of
+  # configure-scenario.yml for the whole Cribl cell (observed live). So the
+  # "skip if the service is absent" guard is expressed inline on this one task
+  # via failed_when instead of a check+conditional block: attempt the restart,
+  # but treat the specific "service not installed" failure as a no-op success so
+  # the documented win-ce MSI blocker degrades gracefully instead of failing the
+  # cell. (The Linux handler above is already a single task, which is why it was
+  # unaffected.)
+  ansible.windows.win_service:
+    name: "{{ cribl_edge_service_name }}"
+    state: restarted
+  register: _cribl_edge_win_restart
+  failed_when:
+    - _cribl_edge_win_restart is failed
+    - "'is not installed' not in (_cribl_edge_win_restart.msg | default(''))"
+    - "'Cannot find any service' not in (_cribl_edge_win_restart.msg | default(''))"
+    - "'does not exist' not in (_cribl_edge_win_restart.msg | default(''))"
