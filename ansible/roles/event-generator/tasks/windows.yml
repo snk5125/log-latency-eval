@@ -24,6 +24,8 @@
     region: "{{ llt_aws_region }}"
     profile: "{{ llt_logging_profile | default(omit) }}"
   delegate_to: localhost
+  connection: local   # control-node task — not the play's aws_ssm connection
+  become: false
 
 - name: Stage eventgen.py onto the Windows host (over SSM)
   ansible.windows.win_copy:

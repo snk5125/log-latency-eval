@@ -17,6 +17,8 @@
     suffix: _llt_eventgen.py
   register: _eventgen_control_tmp
   delegate_to: localhost
+  connection: local   # control-node task — must NOT use the play's aws_ssm connection
+  become: false       # no privilege escalation on the control node
   # M11 fix: the fetch below must land in CONTROL-NODE scratch, not at
   # eventgen_bin_linux (/opt/llt/generator/eventgen.py) — that path is the
   # HOST's install path. Writing it directly via delegate_to: localhost was
@@ -33,6 +35,8 @@
     region: "{{ llt_aws_region }}"
     profile: "{{ llt_logging_profile | default(omit) }}"
   delegate_to: localhost
+  connection: local
+  become: false
   # Download on the control node from the logging-account artifacts bucket, then
   # push to the host over SSM (next task). We do this via control node because
   # the artifacts bucket is in the logging account (PLAN §4.3) and cross-account
@@ -53,6 +57,8 @@
     path: "{{ _eventgen_control_tmp.path }}"
     state: absent
   delegate_to: localhost
+  connection: local
+  become: false
 
 - name: Install eventgen systemd unit (Linux)
   ansible.builtin.template:
