@@ -132,17 +132,19 @@
 # assert it is < 5 ms (PLAN §5.3 — Windows sync is coarser than chrony).
 # -----------------------------------------------------------------------------
 - name: Assert Windows clock discipline (w32tm) and record evidence
-  # EXCLUDE the Cribl-stack Windows host (win-ce) from the clock gate:
-  # `os_windows:!stack_cribl` resolves to win-vec only. WHY: win-ce's Cribl Edge
-  # is the documented external MSI blocker (HANDOFF item 3) — it can never
-  # forward events, so it CONTRIBUTES NO DATA to any run, yet its w32time clock
-  # chronically hovers near/over the 5 ms bound and re-slews slowly. Because
-  # assert-clocks gates a run on EVERY listed host, leaving win-ce in would let a
-  # host that produces zero measured data abort otherwise-valid cells. Gating
-  # only hosts whose timestamps actually enter the measurement is the correct
-  # scope. (If the win-ce MSI blocker is ever resolved and it starts
-  # contributing, drop this exclusion so its clock is disciplined again.)
-  hosts: "os_windows:!stack_cribl"
+  # PARTICIPANT-SCOPED + win-ce-excluded Windows clock gate. The pattern resolves:
+  #   * agent=vec cells -> `os_windows:!stack_cribl` = win-vec only (the Windows
+  #     Vector generator, which DOES stamp t_gen for the cell -> gate it).
+  #   * agent=ce  cells -> a non-matching pattern -> NO Windows host is gated
+  #     (win-vec is a Vector generator, not a participant in a Cribl-agent cell,
+  #     so its clock is irrelevant and must not abort otherwise-valid ce cells —
+  #     this alone salvages all 24 ce cells, which are pure-Linux measurements).
+  # win-ce (Cribl-stack Windows) is excluded in BOTH cases: its Cribl Edge is the
+  # documented external MSI blocker (HANDOFF item 3), so it forwards no events and
+  # contributes zero measured data. `agent` is passed per-cell by run_matrix;
+  # defaults to 'vec' (gate win-vec) when run standalone so a clock check is never
+  # skipped by accident.
+  hosts: "{{ 'os_windows:!stack_cribl' if (agent | default('vec')) == 'vec' else 'llt_no_windows_clock_gate_for_ce_cells' }}"
   gather_facts: true
   # Windows aws_ssm sessions already run as SYSTEM — no become (stays become-free).
   vars:
@@ -151,7 +153,15 @@
     ansible_aws_ssm_bucket_name: "{{ llt_artifacts_bucket }}"
     ansible_aws_ssm_region: "{{ llt_aws_region }}"
     ansible_aws_ssm_profile: "{{ llt_ssm_profile | default(omit) }}"
-    clock_bound_max_ms_win: 5.0
+    # PLAN §5.3 originally set 5 ms, but win-vec's w32time empirically oscillates
+    # 5–8 ms under load (verified live: matrix cells aborted at 5.05 / 7.17 /
+    # 8.02 ms). The Amazon Time Sync source (169.254.169.123) is accurate, but
+    # Windows w32time's poll/slew cadence cannot hold 5 ms on this host. Relaxed
+    # to 20 ms (user-approved methodology change) so the batched Windows hops
+    # (agent→agg ~500 ms) remain valid; the sub-ms Windows gen→agent hop is
+    # clock-noise-dominated at this bound and MUST be reported as INDICATIVE ONLY.
+    # Linux keeps its 1 ms chrony bound. Record this deviation in REPORT §5.3.
+    clock_bound_max_ms_win: 20.0
     llt_time_sync_source: "169.254.169.123"
   tasks:
     - name: Run w32tm stripchart against AWS Time Sync source
@@ -201,7 +211,7 @@
               | max
               | default(0.0)) * 1000.0 }}
 
-    - name: Assert Windows stripchart bound within 5 ms (PLAN §5.3)
+    - name: Assert Windows stripchart bound within 20 ms (PLAN §5.3, relaxed)
       ansible.builtin.assert:
         that:
           - (win_offset_ms_max | float) < (clock_bound_max_ms_win | float)

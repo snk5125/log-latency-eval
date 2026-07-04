@@ -341,8 +341,13 @@ def execute_cell(cell, aws, args, acct_logging):
         raise RuntimeError("configure-scenario failed for %s" % run_id)
 
     # --- Phase 2: assert clocks (ABORT cell on failure, PLAN §5.3) ---------------
+    # Pass the cell's `agent` so assert-clocks can PARTICIPANT-SCOPE the Windows
+    # clock gate: win-vec (the only gated Windows host) participates ONLY in
+    # agent=vec cells; it stamps nothing in agent=ce cells and so must not gate
+    # them. See assert-clocks.yml's Windows play `hosts` pattern.
     print("  [2/6] assert clock sync")
-    if not run_ansible(PB_ASSERT_CLOCKS, {"run_id": run_id}, args.dry_run):
+    if not run_ansible(PB_ASSERT_CLOCKS, {"run_id": run_id, "agent": cell.agent},
+                       args.dry_run):
         raise RuntimeError("clock assertion FAILED for %s — aborting cell" % run_id)
 
     # --- Phase 3: start generators on both hosts via SSM -------------------------
