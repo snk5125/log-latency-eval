@@ -24,21 +24,33 @@
   community.windows.win_unzip:
     src: "C:\\llt\\vector-{{ vector_version }}.zip"
     dest: "C:\\llt\\vector-staging"
-    # M2: the archive's top-level entry is a `vector-{{ vector_win_arch }}/`
-    # directory (e.g. vector-x86_64-pc-windows-msvc/bin/vector.exe). Extract
-    # to a staging dir first, then move the INNER contents up so the binary
+    # Extract to a staging dir first, then move the contents up so the binary
     # ends up at {{ vector_dir_win }}\bin\vector.exe as every downstream task
-    # (version-evidence, NSSM) expects.
+    # (version-evidence, NSSM) expects. NOTE: the archive layout is NOT stable
+    # across Vector releases — some ship a nested `vector-{{ vector_win_arch }}/`
+    # top dir, but 0.49.0's Windows zip extracts bin/ config/ etc. DIRECTLY into
+    # the staging root (verified live). The move task below discovers where
+    # bin\vector.exe actually landed rather than assuming a fixed nested name.
 
 - name: Check whether Vector is already installed at the target dir (idempotency guard)
   ansible.windows.win_stat:
     path: "{{ vector_dir_win }}\\bin\\vector.exe"
   register: _vector_bin_stat
 
-- name: Move extracted Vector contents up from the nested archive dir (Windows, M2)
-  ansible.windows.win_shell: >-
-    Move-Item -Path "C:\llt\vector-staging\vector-{{ vector_win_arch }}\*"
-    -Destination "{{ vector_dir_win }}" -Force
+- name: Move extracted Vector contents up to the target dir (Windows, layout-agnostic)
+  ansible.windows.win_shell: |
+    # Find bin\vector.exe anywhere under staging (flat OR nested archive layout),
+    # then move the contents of ITS PARENT-of-bin (the vector root) up to the
+    # target dir. This tolerates both the 0.49.0 flat layout and the older
+    # vector-<arch>/ nested layout without hard-coding the arch dir name.
+    $exe = Get-ChildItem -Path 'C:\llt\vector-staging' -Recurse -Filter 'vector.exe' -ErrorAction SilentlyContinue |
+             Where-Object { $_.DirectoryName -like '*\bin' } |
+             Select-Object -First 1
+    if (-not $exe) { throw 'vector.exe not found under C:\llt\vector-staging after unzip' }
+    $vroot = Split-Path -Parent $exe.DirectoryName   # parent of ...\bin
+    Get-ChildItem -LiteralPath $vroot -Force | ForEach-Object {
+      Move-Item -LiteralPath $_.FullName -Destination '{{ vector_dir_win }}' -Force
+    }
   args:
     creates: "{{ vector_dir_win }}\\bin\\vector.exe"
   when: not _vector_bin_stat.stat.exists
