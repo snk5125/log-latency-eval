@@ -25,12 +25,16 @@ cribl_edge_version: "4.18.2"
 # embeds a per-release build hash not derivable from the version, so the full
 # Linux URL is hardcoded (verified 200). Prior 4.13.0/no-hash URL 404'd.
 cribl_edge_download_linux: "https://cdn.cribl.io/dl/4.18.2/cribl-4.18.2-fd1f0d2f-linux-x64.tgz"
-# M3: Cribl does NOT ship a Windows .zip for Edge — Windows install is via MSI.
-# URL follows Cribl's documented download-CDN pattern for the Windows MSI
-# artifact. TODO: confirm the exact 4.13.0 MSI filename/URL against
-# https://docs.cribl.io/edge/deploy-windows/ (or the CDN listing) before first
-# real deploy — left as a comment rather than blocking the build (per the
-# task's "do not stall" guidance for unverified URLs).
+# EXTERNAL BLOCKER (win-ce host only) — see HANDOFF.md item 3. This URL 404s and
+# there is NO publicly-scriptable Windows installer for Cribl Edge 4.18.2:
+# every cdn.cribl.io *.msi filename permutation 404s (only the linux tgz and a
+# windows-x64.zip exist on the CDN), and Cribl's docs state the ONLY supported
+# Windows install is the MSI obtained interactively from the (session-gated)
+# Cribl Download page — not a stable CDN path. So converge of win-ce fails at
+# the download step below until a real MSI URL is supplied (or an unsupported
+# ZIP install is accepted). win-ce is the least-important host; the smoke test
+# and the whole Linux path do not depend on it. Left pointing at the documented
+# (nonexistent) MSI name so the failure is explicit rather than silent.
 cribl_edge_download_win: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl-{{ cribl_edge_version }}-windows-x64.msi"
 
 # CRIBL_HOME install roots.

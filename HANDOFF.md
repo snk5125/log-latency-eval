@@ -66,8 +66,32 @@ offline):**
    S3 source `pollTimeoutSecs`. (`workerProcesses` is superseded by the
    documented `cribl.yml workers.count` above.) Wrong keys are ignored/error at
    converge; deploy is gated anyway.
-3. **Cribl Edge Windows MSI URL** — exact 4.13 download URL is a TODO in the
-   `cribl-edge` role (the agent side, unaffected by the standalone redesign).
+3. **Cribl Edge Windows install — EXTERNAL BLOCKER (win-ce host only).**
+   Investigated live (2026-07): the pinned MSI URL in `cribl-edge/defaults`
+   (`https://cdn.cribl.io/dl/4.18.2/cribl-4.18.2-windows-x64.msi`) 404s, AND
+   **no MSI exists for 4.18.2 on the public CDN** — every filename permutation
+   tried 404s (with/without build hash `fd1f0d2f`, with/without `-edge-`,
+   `-win-`, etc.). Confirmed:
+   - `https://cdn.cribl.io/dl/4.18.2/cribl-4.18.2-fd1f0d2f-linux-x64.tgz` -> 200 (Linux, used)
+   - `https://cdn.cribl.io/dl/4.18.2/cribl-4.18.2-fd1f0d2f-windows-x64.zip` -> **200** (82 MB, unpacks to `cribl/bin/...`)
+   - all `.../cribl-4.18.2*windows*.msi` permutations -> **404**
+   Cribl's own docs (docs.cribl.io/edge/deploy-windows/) say the ONLY supported
+   Windows install is the **MSI** (obtained interactively from the Cribl
+   Download page — a session/redirect-gated link, not a stable scriptable
+   `cdn.cribl.io` path), that it installs the Windows service (name `cribl`,
+   NSSM-backed, UI on :9420), and that there is **no supported ZIP install
+   path**. So there is no publicly-scriptable, reproducible installer URL for
+   Cribl Edge 4.18.2 on Windows.
+   RESOLUTION NEEDED (one of): (a) get the real 4.18.2 Windows MSI URL from an
+   authenticated Cribl account / the Download page and pin it (then
+   `win_package` silent `msiexec /qn /i` per docs), or (b) accept an
+   UNSUPPORTED ZIP install (win_get_url the windows-x64.zip + win_unzip to
+   C:\Cribl + wrap `cribl.exe` under NSSM ourselves — but Windows `cribl.exe
+   boot-start` is undocumented, so the service wiring would be hand-rolled and
+   is not guaranteed to match the MSI's behavior). Until (a), win-ce cannot be
+   converged reproducibly. win-ce is the LEAST-important host: the smoke test
+   and the Linux Vector path do not need it, and the experiment matrix's Cribl
+   agent is exercised on Linux (lin-ce). Not blocking anything else.
 
 ---
 
