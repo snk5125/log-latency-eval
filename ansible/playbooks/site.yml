@@ -45,6 +45,16 @@
 - name: Baseline all Windows hosts (common + time-sync)
   hosts: os_windows
   gather_facts: true
+  # WINDOWS FACT-GATHER FIX: exclude the `date_time` subset. Over the
+  # aws_ssm+PowerShell transport the Windows setup module emits a stray carriage
+  # return inside ansible_date_time.hour (observed live: "hour":"\r02"), which
+  # corrupts the module's JSON stdout framing and makes Ansible flag an
+  # otherwise-complete fact gather as "MODULE FAILURE" (verified on win-ce
+  # i-0e8c5: gather_subset=all,!date_time -> SUCCESS). No role uses date_time;
+  # the only fact the roles need is ansible_os_family (in `platform`).
+  gather_subset:
+    - "all"
+    - "!date_time"
   # Windows aws_ssm sessions already run as SYSTEM — no become (stays become-free).
   vars:
     # --- aws_ssm connection vars (Windows) -----------------------------------
@@ -67,6 +77,11 @@
 - name: Install event generator on generator hosts (stopped/disabled)
   hosts: role_generator
   gather_facts: true
+  # Mixed-OS play includes Windows generators — exclude date_time so the
+  # Windows fact-gather doesn't fail (see PLAY 0 Windows-baseline note).
+  gather_subset:
+    - "all"
+    - "!date_time"
   # Mixed OS play: escalate only for Linux members (aws_ssm connects as
   # ssm-user there, C1); Windows aws_ssm sessions already run as SYSTEM.
   # Keyed off inventory group membership (M9), not gathered facts, so this
@@ -91,6 +106,10 @@
 - name: Install Vector agent on Vector-stack generator hosts
   hosts: role_generator
   gather_facts: true
+  # Mixed-OS play — exclude date_time for Windows fact-gather (see PLAY 0).
+  gather_subset:
+    - "all"
+    - "!date_time"
   # Mixed OS play — see become rationale above (C1/M9).
   become: "{{ 'os_linux' in group_names }}"
   vars:
@@ -109,6 +128,10 @@
 - name: Install Cribl Edge on Cribl-stack generator hosts
   hosts: role_generator
   gather_facts: true
+  # Mixed-OS play — exclude date_time for Windows fact-gather (see PLAY 0).
+  gather_subset:
+    - "all"
+    - "!date_time"
   # Mixed OS play — see become rationale above (C1/M9).
   become: "{{ 'os_linux' in group_names }}"
   vars:
