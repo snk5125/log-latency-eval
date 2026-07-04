@@ -513,6 +513,27 @@ def _s3_client(profile, region):
     return sess.client("s3")
 
 
+def _event_in_run(ev, run_id):
+    """Defense-in-depth run_id guard for final-bucket events.
+
+    Objects are scoped by the S3 prefix `final/{run_id}/`, but the aggregator
+    stamps that prefix from ITS converge-time run_id, so an in-flight event
+    from a PRIOR cell that flushes just after the aggregator is reconfigured
+    could theoretically land under the new run's prefix (cell-boundary bleed).
+    We therefore also cross-check the event BODY's run_id. Only a positive
+    contradiction (a dict event whose run_id differs from the expected run_id)
+    is excluded; non-dict events and events without a run_id field pass through
+    unchanged so the downstream malformed-event skip accounting is preserved.
+    When the expected run_id is empty (manual/legacy whole-prefix analysis),
+    the guard is inert and everything matches — mirroring the `final/` sweep.
+    """
+    if run_id and isinstance(ev, dict):
+        body_run = ev.get("run_id")
+        if body_run is not None and body_run != run_id:
+            return False
+    return True
+
+
 def iter_final_events(s3, final_bucket, run_id):
     """Yield (event, final_ms) from all objects under final/{run_id}/ (streaming).
 
@@ -535,6 +556,8 @@ def iter_final_events(s3, final_bucket, run_id):
             final_ms = _object_put_ms(head, obj)
             body = s3.get_object(Bucket=final_bucket, Key=key)["Body"]
             for ev in _iter_ndjson(body, key):
+                if not _event_in_run(ev, run_id):
+                    continue  # cross-run bleed guard (see _event_in_run)
                 yield ev, final_ms
 
 
@@ -1240,6 +1263,25 @@ def run_self_test():
     check("terminal-tier guard: single-tier scenario credits agg1 normally "
           "(agg1 IS its terminal tier, no guard should fire)",
           "agg_last_to_final" in d_s1_ok and missing_s1_ok is False)
+
+    # --- Test 13: cross-run bleed guard (_event_in_run) --------------------------
+    # A final object is prefix-scoped by run_id, but the aggregator stamps that
+    # prefix from its own converge-time run_id, so a stale event from a prior
+    # cell could bleed into a new run's prefix at a cell boundary. iter_final_events
+    # cross-checks the event body's run_id to exclude exactly that case, WITHOUT
+    # disturbing malformed-event handling (root-caused from the smoke-test 2x).
+    check("run_id guard: matching body run_id kept",
+          _event_in_run({"seq": 1, "run_id": "R1"}, "R1") is True)
+    check("run_id guard: contradicting body run_id excluded (cell-boundary "
+          "bleed guard)", _event_in_run({"seq": 1, "run_id": "R2"}, "R1") is False)
+    check("run_id guard: event with no run_id field passes through (no positive "
+          "mismatch — prefix already scoped it)",
+          _event_in_run({"seq": 1}, "R1") is True)
+    check("run_id guard: non-dict event passes through (preserves downstream "
+          "skip accounting)", _event_in_run("not-a-dict", "R1") is True)
+    check("run_id guard: empty expected run_id is inert (manual whole-prefix "
+          "sweep still matches everything)",
+          _event_in_run({"seq": 1, "run_id": "anything"}, "") is True)
 
     print("")
     print("Self-test assertion count: %d" % n_assertions[0])

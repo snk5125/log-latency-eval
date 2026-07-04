@@ -4,13 +4,51 @@
 can resume this project without re-deriving state. Read this, then PLAN.md
 (the binding spec), then the referenced files as needed.
 
-**Last updated:** 2026-07-03 (session 2: full implementation review + fixes,
-diagrams #8, tuning #9/#10)
-**Repo state:** local git, branch `main`. **Phase:** BUILD (PLAN §8 phase 1) —
-build artifacts now COMPLETE (all pending build tasks #8/#9/#10 done; a
-cross-component review found + fixed ~30 deploy-blocking defects). Still
-⏸ **paused before deployment.** **No AWS deployment has occurred. No costs
-incurred. No results exist yet — REPORT.md findings are all [PENDING].**
+**Last updated:** 2026-07-03 (session 3: LIVE deploy + converge + smoke test;
+2× duplication investigated & analyzer hardened; **instances STOPPED overnight**)
+**Repo state:** local git, branch `main`, working tree clean, **nothing pushed**.
+**Phase:** DEPLOYED (PLAN §8 phase 2). Infra is APPLIED and CONVERGED on real
+AWS (two accounts, 12 EC2). Pipeline PROVEN end-to-end on the Linux Vector path
+(s1-vec-vagg smoke). **The 12 EC2 instances are currently STOPPED** to save cost
+overnight — see **§0 RESUME** below to pick up. Terraform state, converged host
+software, VPCs/NLBs/endpoints, and S3 buckets all remain intact. **The 48-run
+measurement matrix has NOT been run yet — REPORT.md findings are still [PENDING].**
+
+---
+
+## 0. RESUME (start here next session)
+
+**Instances are STOPPED, not destroyed.** Everything else (network, buckets,
+converged software) is intact, so resume is fast — no re-apply needed.
+
+1. **Start the fleet** (both accounts, region us-east-2):
+   ```
+   for P in llt-sender llt-logging; do
+     IDS=$(aws ec2 describe-instances --profile $P --region us-east-2 \
+       --filters "Name=tag:Project,Values=llt" "Name=instance-state-name,Values=stopped" \
+       --query "Reservations[].Instances[].InstanceId" --output text)
+     [ -n "$IDS" ] && aws ec2 start-instances --profile $P --region us-east-2 --instance-ids $IDS
+   done
+   ```
+   Wait ~2–3 min for SSM to come online (instance-ids are stable across stop/start;
+   private IPs are stable; only public IPs, which we don't use, may change).
+2. **(Recommended) Re-converge** `ansible/playbooks/site.yml` — all session-3 fixes
+   are committed, so this should now be clean 11/12 (win-ce still blocked on the
+   Cribl MSI, item 3). Confirms software survived the stop/start. Env recipe: isolated
+   venv at `…/scratchpad/llt-venv`, `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`,
+   `LLT_AWS_PROFILE_SENDER=llt-sender LLT_AWS_PROFILE_LOGGING=llt-logging`,
+   `ansible_aws_ssm_plugin=~/bin/session-manager-plugin`, forks=5.
+3. **Run the matrix:** `python3 harness/orchestrator/run_matrix.py --profile-sender
+   llt-sender --profile-logging llt-logging` (start with `--dry-run`, then a single
+   cell e.g. `s1-vec-vagg-1k` to sanity-check, then the full 48). **TRIPWIRE:** a
+   correct run's `dup` column must be **~0%**; ~100% dup means the aggregator wasn't
+   reconfigured with the run_id (see §8 — the 2× we already root-caused).
+4. `harness/analysis/analyze.py` → `report/evidence/`, then fill REPORT.md.
+
+**If you'd rather stop paying the residual fixed cost** (NAT/NLB/endpoints,
+~$0.35–0.50/hr while instances are stopped): `scripts/teardown.sh` does a full
+`terraform destroy` — but then resume requires a full re-apply (~15 min) +
+re-converge, not just start-instances.
 
 **Session-2 changes (all committed, offline-verified, NOT deployed):**
 - Full spec-conformance review (4 review agents) → fixes across terraform,
@@ -74,9 +112,10 @@ generator-host converge failures and proved the pipeline end-to-end:
 - **Issue C part 2 (win-ce cribl-edge MSI):** EXTERNAL BLOCKER — see item 3
   below. win-ce is the only host that cannot converge; it is not needed for the
   smoke test or the Linux path.
-- **Converge result:** 10/12 hosts `failed=0` on the full run; the 2 Windows
-  failures were the nssm.exe issues, now fixed (re-converge pending to confirm
-  win-vec is fully green; win-ce remains blocked on the MSI only).
+- **Converge result:** **11/12 hosts `failed=0`** (confirmed after re-converge:
+  win-vec is now green; all 8 aggregators + both Linux generators green). The sole
+  remaining failure is **win-ce** at the Cribl Edge MSI download — external blocker
+  only (item 3). 8 fix commits `83c922c`..`b7b3ade` on `main`.
 - **SMOKE TEST — PIPELINE PROVEN (s1-vec-vagg, Linux):** ran the generator on
   llt-lin-vec-01 (eps 1000, 10 s warmup + 60 s), Vector agent → vagg Tier-1 NLB
   :8080 → final S3. The `final/` prefix of `llt-final-624627265315` went from
@@ -87,16 +126,37 @@ generator-host converge failures and proved the pipeline end-to-end:
   510 ms; agg_last→final adj_mean 0 ms after the 5 s flush subtraction;
   end-to-end mean 3924 ms). Analysis + generator + agent + aggregator + S3 sink
   all confirmed working on live infra.
+- **2× duplication in the smoke stats — INVESTIGATED & RESOLVED (not a bug).**
+  The smoke `analyze.py` showed `dup≈60014` on 60000 unique measurement events.
+  Root-caused from the raw objects: the 28 final objects split into two ~70 s
+  write bursts, and each `seq`'s two copies carried **different `t_gen_ns` (~125 s
+  apart)** — i.e. the generator RAN TWICE under one `run_id="smoke"`, not a
+  transport duplicate (a retry carries identical `t_gen_ns`). The smoke path set
+  run_id only in generator.json and started the service directly, **bypassing
+  `configure-scenario.yml`**, so the aggregators kept converge-time `run_id=""`
+  and wrote both runs to the unpartitioned prefix `final//linux/`; analyze (empty
+  run_id) swept both. A real `run_matrix` cell will NOT do this: unique run_id →
+  `configure-scenario.yml` **Play D** re-templates the AGGREGATOR sink to
+  `final/{run_id}/{host_os}/` → generator starts once (`eventgen.py` opens output
+  `mode="w"`, truncate) → analyze reads exactly `final/{run_id}/`. The pipeline
+  delivered each generated event exactly once (only ~0.03% true at-least-once
+  boundary dups, which analyze already dedups). **Hardening applied** (commit this
+  session): `analyze.py iter_final_events` now also cross-checks the event body's
+  run_id (`_event_in_run`) as defense-in-depth against cell-boundary bleed;
+  self-test now **72 assertions** (was 67). **Cleanup:** the 28 orphan smoke
+  objects at `final//linux/` were deleted — `final/` is empty again.
 
 **⚠ DEPLOY-TIME TODOs (verify before first apply — could not be validated
 offline):**
-1. **Standalone Cribl Stream smoke-test** (low risk, but unverified against a
-   live node this session): (a) a tarball-installed Cribl node runs in Stream
-   mode by default — the role deliberately issues NO `mode-*` command; confirm
-   on first converge. (b) node-level worker count is set via
-   `$CRIBL_HOME/local/cribl/cribl.yml` `workers.count` (documented key);
-   confirm it takes effect. (c) local config under `$CRIBL_HOME/local/cribl/`
-   is read without a leader/commit.
+1. **Standalone Cribl Stream — CONVERGE VALIDATED, data-path NOT yet smoke-tested.**
+   All 4 Cribl Stream aggregator nodes converged `failed=0` live this session
+   (tarball install, Stream mode by default with no `mode-*` command, file config
+   under `$CRIBL_HOME/local/cribl/` read without a leader/commit — all confirmed at
+   converge). ⚠ REMAINING: the smoke test exercised only the **Vector** data path
+   (s1-vec-vagg). The Cribl aggregator RECEIVE→forward→S3-write path (any `*-cs-*`
+   cell) has not yet had events pushed through it — run one `s1-ce-cs-1k` (or
+   `s1-vec-cs-1k`) cell early in the matrix to confirm the Cribl sink writes to
+   `final/{run_id}/` before trusting all 24 Cribl-aggregator cells.
 2. **3 Cribl 4.13 config keys still best-guess** (marked TODO in-config +
    `docs/TUNING.md` §6): File Monitor `servicePeriodSecs`, Webhook `concurrency`,
    S3 source `pollTimeoutSecs`. (`workerProcesses` is superseded by the
