@@ -46,3 +46,17 @@
   # C7 fix: -m systemd is the init-system selector boot-start actually expects;
   # -u root runs the service as root (needed to read the generator output file
   # regardless of which user wrote it).
+
+- name: Ensure Cribl Edge service is started (Linux)
+  ansible.builtin.systemd:
+    name: "{{ cribl_edge_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  # Parity with the (working) cribl-stream role, which has the equivalent
+  # "Ensure Cribl service is started" step. `boot-start enable` writes the unit
+  # file to /etc/systemd/system but does NOT `systemctl daemon-reload`, so the
+  # subsequent config-template handler ("Restart cribl edge (linux)") could not
+  # find the unit ("Could not find the requested service cribl-edge"). Starting
+  # it here with daemon_reload:true registers the freshly-written unit BEFORE the
+  # config handler fires, so the restart notify has a real service to act on.

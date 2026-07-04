@@ -36,7 +36,15 @@ cribl_edge_download_win: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl
 # CRIBL_HOME install roots.
 cribl_home_linux: /opt/cribl
 cribl_home_win: C:\Cribl
-cribl_edge_service_name: cribl
+# Cribl's `boot-start enable` creates a systemd unit named after the PRODUCT
+# MODE, not a bare "cribl": in Edge mode (after `cribl mode-edge`) the unit is
+# `cribl-edge.service` — verified live on the deployed Edge host
+# (`systemctl list-unit-files | grep cribl` -> cribl-edge.service). This differs
+# from cribl-stream, whose standalone boot-start (no mode-edge) yields plain
+# `cribl.service` (hence cribl_service_name: cribl is correct THERE). The old
+# value "cribl" here caused the restart handler to fail with "Could not find the
+# requested service cribl". The `.service` suffix is optional for systemd.
+cribl_edge_service_name: cribl-edge
 
 # Config lives under $CRIBL_HOME/local/cribl/ (standalone file-based config).
 cribl_edge_local_linux: /opt/cribl/local/cribl
