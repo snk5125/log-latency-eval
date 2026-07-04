@@ -69,24 +69,19 @@ cribl_edge_local_linux: /opt/cribl/local/edge
 cribl_edge_local_win: C:\Cribl\local\edge
 
 # --- Source: generator output file to monitor (parity with vector-agent) ----
-# The Cribl 4.18 File Monitor input in `mode: manual` takes a SEARCH DIRECTORY
-# (`path:`, absolute, no wildcards) plus a `filenames:` allowlist of basenames
-# WITHIN that dir — NOT a full file path in `filenames:`. Verified live: putting
-# the full path in filenames with no `path:` fails schema validation
-# ("should have required property 'path'"). So we split the generator output
-# path into a directory + a filename for the manual-mode File Monitor.
-cribl_edge_source_dir_linux: /opt/llt/generator/out
-cribl_edge_source_file: events.ndjson
-# Full file path — retained for reference/other uses.
+# The File Monitor runs in `mode: auto` (see inputs.yml.j2), which takes a
+# `filenames:` allowlist of FULL paths/globs (no `path:` directory). auto is
+# required because it discovers the file the generator holds open for writing;
+# manual-mode directory polling discovered nothing across a full live window.
 cribl_edge_source_path_linux: /opt/llt/generator/out/events.ndjson
 # Backslash form — reserved for any win_* MODULE that needs a literal Windows
 # path (fetch/copy/service management). NOT for rendered config content.
 cribl_edge_source_path_win: C:\llt\generator\out\events.ndjson
-# Forward-slash form of the SEARCH DIRECTORY, for use ONLY inside rendered config
-# content (inputs.yml.j2 `path:`). Backslashes inside a double-quoted YAML/JSON
-# scalar produce illegal escapes and Cribl's config loader rejects the file
-# (C11 fix).
-cribl_edge_source_dir_win_fwd: "C:/llt/generator/out"
+# Forward-slash form of the FULL FILE PATH, for use ONLY inside rendered config
+# content (inputs.yml.j2 `filenames:`). Backslashes inside a double-quoted
+# YAML/JSON scalar produce illegal escapes and Cribl's config loader rejects the
+# file (C11 fix).
+cribl_edge_source_path_win_fwd: "C:/llt/generator/out/events.ndjson"
 
 # --- Scenario wiring (injected per run) ------------------------------------
 scenario: "s1"

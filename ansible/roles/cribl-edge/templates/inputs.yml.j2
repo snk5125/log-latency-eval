@@ -2,16 +2,13 @@
 # Cribl Edge inputs — File Monitor on the generator output (PARITY with the
 # Vector agent's `file` source; PLAN §5.2 gen->agent hop).
 #
-# LIVE-VERIFIED SCHEMA (Cribl Edge 4.18.2 on lin-ce). The whole prior config was
-# rejected/ignored for two reasons that are now fixed:
+# LIVE-VERIFIED SCHEMA + BEHAVIOR (Cribl Edge 4.18.2 on lin-ce). The whole prior
+# config was rejected/ignored, and then didn't ingest, for three reasons now
+# fixed:
 #   (1) It was written to the wrong config group (local/cribl/ instead of
 #       local/edge/) so a mode-edge worker never saw it — see cribl_edge_local_*
 #       in defaults/main.yml.
-#   (2) Even once loaded, the File Monitor schema differs from what was guessed:
-#       - `mode: manual` requires a search DIRECTORY `path:` (absolute, no
-#         wildcards) PLUS a `filenames:` allowlist of basenames within it — NOT
-#         a full file path in `filenames:` (live error: "should have required
-#         property 'path'").
+#   (2) The File Monitor schema differs from what was guessed:
 #       - the polling-interval key is `interval` (integer seconds), NOT
 #         `servicePeriodSecs` (packaged in_file_varlog uses `interval: 10`;
 #         `servicePeriodSecs` silently loaded but is not the real key).
@@ -22,36 +19,44 @@
 #         "Event breaking rules for new line delimited json data"), NOT the UI
 #         label "JSON Newline Delimited" (live warn: 'rulesets need creating:
 #         ["JSON Newline Delimited"]'). `Cribl` resolves with no warning.
+#   (3) DISCOVERY MODE — `mode: auto`, NOT `manual`. This is the critical
+#       ingestion fix. In `mode: manual` (search a directory on a poll interval)
+#       the File Monitor discovered NOTHING across a full 90 s measurement window
+#       — gen_file produced zero input metrics and the pipeline saw zero events,
+#       even though the generator was actively appending to the file. In
+#       `mode: auto` the source "discovers files that running processes hold open
+#       for writing" (docs.cribl.io/edge/sources-file-monitor/) — which is
+#       exactly what eventgen.py's RotatingWriter does (holds the fd open,
+#       appending). Verified live: with mode:auto the worker logged "FileMonitor
+#       collector added. file:/opt/llt/generator/out/events.ndjson" and _raw
+#       inEvents jumped from 96 (metrics only) to thousands within seconds of a
+#       process holding the file open and appending. So auto is REQUIRED for the
+#       continuously-appended generator output; manual is for static/rotated
+#       logs. auto takes a `filenames` allowlist of full paths/globs (no `path`).
+#
+# TUNING §4.6 item 1 — read-from-beginning DECISION (tailOnly: false): identical
+# rationale to vector-agent/templates/vector.yaml.j2's gen_file source comment —
+# eventgen.py's RotatingWriter truncates this file to empty (mode="w") every time
+# the generator process starts, and the orchestrator starts the generator only
+# AFTER this agent is already installed/running/watching. Read-from-start of a
+# freshly-truncated file is therefore latency-neutral vs. read-from-end.
 inputs:
   gen_file:
     type: file
     disabled: false
-    # Route this source's events through the Routes/pipelines (default-off for
-    # this input type on Edge would drop it) — required so the llt_main route
-    # actually receives these events.
+    # Route this source's events through the Routes/pipelines — required so the
+    # llt_main route actually receives these events.
     sendToRoutes: true
-    # mode: manual — deterministic discovery of a known directory (matches the
-    # packaged in_file_varlog default's shape). `manual` requires `path` (dir)
-    # + `filenames` (allowlist). We monitor the single generator output file.
-    #
-    # TUNING §4.6 item 1 — read-from-beginning DECISION (tailOnly: false):
-    # identical rationale to vector-agent/templates/vector.yaml.j2's gen_file
-    # source comment — eventgen.py's RotatingWriter truncates this file to empty
-    # (mode="w") every time the generator process starts, and the orchestrator
-    # starts the generator (harness/orchestrator/run_matrix.py execute_cell
-    # phase 3) only AFTER this agent is already installed/running/watching (this
-    # role's configure.yml only re-templates+restarts on scenario changes, never
-    # starts the agent per-run). Read-from-start of a freshly-truncated file is
-    # therefore latency-neutral vs. read-from-end — there is no stale data to
-    # skip. See the Vector comment for the full chain of evidence.
-    mode: manual
-    path: "{{ cribl_edge_source_dir_win_fwd if ansible_os_family == 'Windows' else cribl_edge_source_dir_linux }}"
-    # C11: forward slashes only on Windows — this path is rendered into config
-    # CONTENT, not consumed by a win_* module; backslashes inside the
-    # double-quoted scalar produce illegal escapes and Cribl's config loader
-    # rejects the file. filenames = basename allowlist WITHIN `path`.
+    # mode: auto — discovers files held open for writing by a running process
+    # (the generator). REQUIRED for the continuously-appended output; manual mode
+    # discovered nothing live. See the (3) block above.
+    mode: auto
+    # In auto mode `filenames` is a full-path/glob allowlist (NOT basenames under
+    # a `path:` dir). C11: forward slashes only on Windows — rendered into config
+    # CONTENT, not a win_* module; backslashes in a double-quoted scalar produce
+    # illegal escapes that Cribl's config loader rejects.
     filenames:
-      - "{{ cribl_edge_source_file }}"
+      - "{{ cribl_edge_source_path_win_fwd if ansible_os_family == 'Windows' else cribl_edge_source_path_linux }}"
     tailOnly: false
     idleTimeout: 30
     # TUNING §4.6 item 1 — poll interval floored to cribl_edge_poll_interval_secs
