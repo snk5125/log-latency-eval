@@ -16,9 +16,39 @@
   # validate: refuse to install a config Vector cannot parse — a broken config
   # mid-matrix would silently drop a run's data.
 
-- name: Template Vector agent config (Windows)
-  ansible.windows.win_template:
+# Windows config push: render on the control node, then win_copy the RESULT.
+# ansible.windows.win_template over the aws_ssm connection was observed to write
+# the RAW, UNRENDERED .j2 to the host (verified live on win-vec: the deployed
+# vector.yaml began with literal `# {{ ansible_managed }}` and the `{# ... #}`
+# Jinja comment, so Vector failed to parse it — "did not find expected ',' or
+# '}' ... parsing a flow mapping" — exited, and NSSM throttled the service into
+# SERVICE_PAUSED, which then made the Restart handler fail). Rendering locally
+# with ansible.builtin.template (which the Linux path already uses and which
+# renders this template correctly) and shipping the finished file with win_copy
+# is transport-agnostic and keeps byte-for-byte parity with the Linux config.
+- name: Render Vector agent config locally for Windows (delegate to control node)
+  ansible.builtin.template:
     src: vector.yaml.j2
+    dest: "{{ vector_config_win_render_tmp }}"
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+  # Force a plain local connection for the delegated render. Without this, the
+  # delegated task inherits the play's aws_ssm connection vars (ansible_connection
+  # + ansible_aws_ssm_profile=omit placeholder), and the template module fails on
+  # the control node with "The config profile (__omit_place_holder__...) could not
+  # be found". A local render needs no AWS profile at all.
+  vars:
+    ansible_connection: local
+    ansible_shell_type: sh
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    ansible_aws_ssm_profile: ""
+  when: ansible_os_family == "Windows"
+  register: _vector_win_render
+
+- name: Copy rendered Vector agent config to Windows host
+  ansible.windows.win_copy:
+    src: "{{ vector_config_win_render_tmp }}"
     dest: "{{ vector_config_win }}"
   when: ansible_os_family == "Windows"
   notify: Restart vector (windows)

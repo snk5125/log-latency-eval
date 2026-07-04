@@ -25,6 +25,11 @@ vector_config_linux: /etc/vector/vector.yaml
 vector_dir_win: C:\Program Files\Vector
 vector_config_win: C:\ProgramData\Vector\vector.yaml
 vector_service_name: vector
+# Control-node temp path for the LOCALLY-rendered Windows config (configure.yml
+# renders here with ansible.builtin.template, then win_copy ships it — win_template
+# over aws_ssm was writing the raw unrendered .j2). Per-host to avoid collisions
+# when the two Windows generators are configured in the same run.
+vector_config_win_render_tmp: "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) | regex_replace('/$', '') }}/llt-vector-{{ inventory_hostname }}.yaml"
 
 # --- Source: generator output file to tail (PLAN §5.2 gen->agent hop) -------
 # Path used by win_* MODULES (fetch/copy/service management) — backslashes are
