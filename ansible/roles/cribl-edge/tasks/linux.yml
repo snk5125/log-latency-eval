@@ -20,7 +20,10 @@
     path: "{{ cribl_edge_local_linux }}"
     state: directory
     mode: "0755"
-  # $CRIBL_HOME/local/cribl — where standalone (non-fleet) config files live.
+  # $CRIBL_HOME/local/edge — the EDGE config group a standalone mode-edge node
+  # actually reads (NOT local/cribl; see defaults/main.yml). `cribl mode-edge`
+  # below also populates this dir (cribl.yml/messages.yml); creating it first is
+  # harmless and guarantees it exists for the later config templating.
 
 - name: Record exact deployed Cribl version as evidence (Linux)
   ansible.builtin.command: "{{ cribl_home_linux }}/bin/cribl version"

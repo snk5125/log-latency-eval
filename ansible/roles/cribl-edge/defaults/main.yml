@@ -50,20 +50,43 @@ cribl_home_win: C:\Cribl
 # requested service cribl". The `.service` suffix is optional for systemd.
 cribl_edge_service_name: cribl-edge
 
-# Config lives under $CRIBL_HOME/local/cribl/ (standalone file-based config).
-cribl_edge_local_linux: /opt/cribl/local/cribl
-cribl_edge_local_win: C:\Cribl\local\cribl
+# Config lives under $CRIBL_HOME/local/edge/ (standalone Edge file-based config).
+# CRITICAL (root cause of the "Edge delivers 0 events" bug): a mode-edge node
+# reads its config from the EDGE config group, NOT the `cribl` (Stream) group.
+# Verified live on lin-ce (Cribl Edge 4.18.2): after `cribl mode-edge`,
+# local/_system/instance.yml is `distributed: {mode: edge}`, the worker's config
+# context is `edge` (worker/0/cribl.log: "context":"edge"), and the loader reads
+# dirs ["/opt/cribl/default/edge","/opt/cribl/local/edge"]. Config placed under
+# local/cribl/ was SILENTLY IGNORED — the worker only loaded its packaged
+# default/edge/inputs.yml defaults (in_file_auto / in_file_varlog / system_*),
+# and our `gen_file` input never appeared in ANY "initializing input" log line,
+# so zero events were ingested end-to-end. The generic Cribl docs page says
+# local/cribl/, but that is WRONG for a standalone mode-edge node — the live
+# node is authoritative. Fix: write config to local/edge/ so the Edge worker
+# actually loads it. (Cribl Stream standalone, by contrast, genuinely uses
+# local/cribl/, which is why the cribl-stream AGGREGATOR role was fine.)
+cribl_edge_local_linux: /opt/cribl/local/edge
+cribl_edge_local_win: C:\Cribl\local\edge
 
 # --- Source: generator output file to monitor (parity with vector-agent) ----
+# The Cribl 4.18 File Monitor input in `mode: manual` takes a SEARCH DIRECTORY
+# (`path:`, absolute, no wildcards) plus a `filenames:` allowlist of basenames
+# WITHIN that dir — NOT a full file path in `filenames:`. Verified live: putting
+# the full path in filenames with no `path:` fails schema validation
+# ("should have required property 'path'"). So we split the generator output
+# path into a directory + a filename for the manual-mode File Monitor.
+cribl_edge_source_dir_linux: /opt/llt/generator/out
+cribl_edge_source_file: events.ndjson
+# Full file path — retained for reference/other uses.
 cribl_edge_source_path_linux: /opt/llt/generator/out/events.ndjson
 # Backslash form — reserved for any win_* MODULE that needs a literal Windows
 # path (fetch/copy/service management). NOT for rendered config content.
 cribl_edge_source_path_win: C:\llt\generator\out\events.ndjson
-# Forward-slash form of the same path, for use ONLY inside rendered config
-# content (inputs.yml.j2 `filenames:`). Backslashes inside a double-quoted
-# YAML/JSON scalar produce illegal escapes and Cribl's config loader rejects
-# the file (C11 fix).
-cribl_edge_source_path_win_fwd: "C:/llt/generator/out/events.ndjson"
+# Forward-slash form of the SEARCH DIRECTORY, for use ONLY inside rendered config
+# content (inputs.yml.j2 `path:`). Backslashes inside a double-quoted YAML/JSON
+# scalar produce illegal escapes and Cribl's config loader rejects the file
+# (C11 fix).
+cribl_edge_source_dir_win_fwd: "C:/llt/generator/out"
 
 # --- Scenario wiring (injected per run) ------------------------------------
 scenario: "s1"
@@ -103,19 +126,26 @@ llt_landing_bucket: "{{ vector_landing_bucket if (aggregator | default('vagg')) 
 cribl_edge_aws_region: "{{ llt_aws_region | default('us-east-2') }}"
 
 # --- Batch constants — CONTROLLED CONSTANT (PLAN §4.5), identical to Vector --
+# NOTE (verified live, Cribl 4.18.2): the S3 destination enforces a MINIMUM of
+# maxFileOpenTimeSec >= 10 ("should be >= 10" schema error at 5). So the 5 s
+# flush that mirrors Vector's aws_s3 batch.timeout_secs=5 CANNOT be honored on
+# the maxFileOpenTimeSec knob for the Cribl S3 destination — it is floored to 10.
+# maxFileIdleTimeSec has no such floor and stays at 5. This is a §4.5 parity
+# asymmetry to record in docs/TUNING.md. (Not on the S1 webhook critical path;
+# only affects S3/S4 cells.)
 cribl_edge_s3_flush_secs: 5              # S3 flush 5 s (== Vector timeout_secs)
-cribl_edge_s3_max_bytes: 10485760       # 10 MB (== Vector max_bytes)
+cribl_edge_s3_open_time_secs: 10         # S3 dest floor: maxFileOpenTimeSec >= 10
+cribl_edge_s3_max_bytes: 10485760        # 10 MB (== Vector max_bytes)
 
 # --- Low-latency tuning profile (PLAN §4.6) — see docs/TUNING.md -----------
 # Item 1: File Monitor source discovery/poll interval. Cribl's "Polling
-# interval" defaults to 10 s (docs.cribl.io/stream/sources-file-monitor/,
-# same source type used standalone by Edge) — floored to 1 s, the parity
-# counterpart to Vector's glob_minimum_cooldown_ms floor (vector-agent
-# defaults/main.yml). Could not find a documented MINIMUM for this setting
-# (only the 10 s default) — 1 s is chosen as a safe practical floor rather
-# than 0, which risks being rejected/rounded by the UI's own validation;
-# left as a TODO to verify against a live 4.13 instance if 0 is in fact
-# accepted as "as fast as possible."
+# interval" defaults to 10 s (docs.cribl.io/edge/sources-file-monitor/) —
+# floored to 1 s, the parity counterpart to Vector's glob_minimum_cooldown_ms
+# floor (vector-agent defaults/main.yml). VERIFIED LIVE (Cribl 4.18.2): the
+# underlying inputs.yml key is `interval` (integer seconds) — the packaged
+# in_file_varlog default uses `interval: 10`, and `interval: 1` initializes
+# cleanly with no schema error. (The earlier guess `servicePeriodSecs` was
+# WRONG — it silently loaded but is not the File Monitor's real polling key.)
 cribl_edge_poll_interval_secs: 1
 
 # Items 6-8: RECORD ONLY — see the full citations in

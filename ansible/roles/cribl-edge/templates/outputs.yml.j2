@@ -11,11 +11,12 @@ outputs:
     type: webhook
     url: "http://{{ llt_t1_endpoint }}:{{ cribl_edge_agg_t1_port }}"
     method: POST
-    # M5: Cribl webhook destination formats are json|raw — "ndjson" is not a
-    # valid value. `format: json` + newline-per-event is Cribl's normal
-    # newline-delimited JSON body shape, matching Vector's framing.method:
-    # newline_delimited (parity preserved).
-    format: json
+    # LIVE-VERIFIED (Cribl 4.18.2): the Webhook destination `format` enum is
+    # {ndjson, json_array, custom, advanced} — `json` is REJECTED ("should be
+    # equal to one of the allowed values"). `ndjson` is newline-delimited JSON,
+    # the exact parity match for Vector's framing.method: newline_delimited.
+    # (The old "formats are json|raw" comment was wrong for this build.)
+    format: ndjson
     # Keep egress near-real-time so the agent->T1 hop measures transport, not
     # buffering (mirrors Vector's 1s agent batch).
     # CONTROLLED CONSTANT — DO NOT CHANGE (PLAN §4.5/§4.6): this is the
@@ -23,13 +24,12 @@ outputs:
     # batch.timeout_secs: 1 — not one of the §4.6 tuning knobs.
     flushPeriodSec: 1
     # compression NOT assessed (PLAN §5.4). TUNING §4.6 item 2 — explicitly
-    # disabled: Cribl Webhook's own documented DEFAULT is compression ON
-    # (gzip) (docs.cribl.io/stream/destinations-webhook/, "Compress" toggle
-    # default enabled) — UNLIKE Vector, whose http sink defaults to `none`.
-    # This is therefore an ACTIVE tuning change on the Cribl side (not just a
-    # default kept explicit) to reach parity with Vector's compression-off
-    # behavior, per the CPU-for-latency rationale (PLAN §4.6.2).
-    compress: none
+    # disabled. LIVE-VERIFIED (Cribl 4.18.2): the Webhook `compress` key is a
+    # BOOLEAN — the string `none` is REJECTED ("should be boolean"); `false`
+    # disables gzip. This is an ACTIVE tuning change on the Cribl side (Cribl's
+    # own default is compression ON) to reach parity with Vector's
+    # compression-off behavior, per the CPU-for-latency rationale (PLAN §4.6.2).
+    compress: false
     # TUNING §4.6 item 2 — connection reuse/keep-alive: Cribl's Webhook
     # destination "Keep alive" is ON by default, holding the client-side
     # connection for up to 120 s (docs.cribl.io/stream/destinations-webhook/)
@@ -80,18 +80,27 @@ outputs:
     # landing/{run_id}/{host_os}/<file>, matching Vector's key_prefix scheme.
     destPath: "`landing/{{ run_id }}/${host_os}`"
     partitionExpr: "''"
+    # LIVE-VERIFIED (Cribl 4.18.2): unlike the Webhook destination, the S3
+    # destination ACCEPTS format: json and compress: none (different enum) — no
+    # schema error on either. Kept as-is.
     format: json
-    # compress: none — PLAN §5.4 lists compression as NOT assessed; also
-    # matches TUNING §4.6 item 2's CPU-for-latency rationale (Cribl S3
-    # destination's own default is likewise no compression for this format,
-    # unlike the Webhook destination's compress-on default — see outputs.yml
-    # to_agg_t1 comment above).
+    # compress: none — PLAN §5.4 lists compression as NOT assessed; the S3
+    # destination's own default is likewise no compression for this format.
     compress: none
-    # CONTROLLED CONSTANT (PLAN §4.5): 5 s flush, 10 MB max — identical to the
-    # Vector aws_s3 sink batch.timeout_secs=5 / max_bytes=10MB. DO NOT CHANGE
-    # — not a §4.6 tuning knob.
+    # LIVE-VERIFIED (Cribl 4.18.2): the S3 destination REQUIRES `stagePath` (the
+    # local dir where objects are assembled before PutObject) — omitting it fails
+    # schema validation ("should have required property 'stagePath'"). Use Cribl's
+    # own state dir.
+    stagePath: "$CRIBL_HOME/state/outputs/staging"
+    # CONTROLLED CONSTANT (PLAN §4.5): 10 MB max — identical to the Vector aws_s3
+    # sink max_bytes=10MB.
     maxFileSizeMB: 10
-    maxFileOpenTimeSec: {{ cribl_edge_s3_flush_secs }}
+    # LIVE-VERIFIED (Cribl 4.18.2): the S3 destination enforces
+    # maxFileOpenTimeSec >= 10 ("should be >= 10" at 5). So the Vector-parity 5 s
+    # flush (batch.timeout_secs=5) CANNOT be honored on this knob — it is floored
+    # to cribl_edge_s3_open_time_secs (10). Recorded as a §4.5 parity asymmetry in
+    # docs/TUNING.md. maxFileIdleTimeSec has no such floor and stays at 5 s.
+    maxFileOpenTimeSec: {{ cribl_edge_s3_open_time_secs }}
     maxFileIdleTimeSec: {{ cribl_edge_s3_flush_secs }}
     # TUNING §4.6 item 3 note: the S3 destination's local file staging (the
     # maxFileOpenTimeSec/maxFileIdleTimeSec-governed active file) is a

@@ -1,18 +1,25 @@
 # =============================================================================
 # roles/cribl-edge/tasks/configure.yml — scenario config as files + restart
 # =============================================================================
-# Delivers standalone config files under $CRIBL_HOME/local/cribl/ (PLAN §7
+# Delivers standalone config files under $CRIBL_HOME/local/edge/ (PLAN §7
 # config-as-files) and restarts Cribl. Called at install AND standalone per-run
 # by configure-scenario.yml. Config MIRRORS the vector-agent role: file monitor
 # source, Eval adds hop_ts.agent, HTTP(S1/S2) or S3(S3/S4) destination.
 ---
 # --- Linux ------------------------------------------------------------------
-# C4 file layout (verified): standalone Cribl Edge config lives under
-# $CRIBL_HOME/local/cribl/. inputs.yml and outputs.yml are direct children of
-# that dir (already correct). Routes and pipeline confs live one level deeper,
-# under pipelines/: local/cribl/pipelines/route.yml and
-# local/cribl/pipelines/<pipeline_id>/conf.yml — so the stamp_agent pipeline
-# needs its OWN subdirectory.
+# CONFIG PATH (root-cause fix, live-verified on lin-ce, Cribl Edge 4.18.2):
+# a standalone MODE-EDGE node reads config from the EDGE config group
+# ($CRIBL_HOME/local/edge/), NOT the `cribl` (Stream) group — see the long
+# comment on cribl_edge_local_linux in defaults/main.yml. Config previously
+# written to local/cribl/ was silently ignored (gen_file never initialized ->
+# 0 events end-to-end). The dest paths below all derive from
+# cribl_edge_local_linux (now /opt/cribl/local/edge), so they now land where the
+# Edge worker actually reads. inputs.yml and outputs.yml are direct children of
+# that dir. Routes and pipeline confs live one level deeper, under pipelines/:
+# local/edge/pipelines/route.yml and local/edge/pipelines/<pipeline_id>/conf.yml
+# — so the stamp_agent pipeline needs its OWN subdirectory (this pipeline
+# conf.yml shape is identical between the edge and cribl groups; verified
+# loading from local/edge/ live).
 - name: Ensure inputs/outputs/pipelines dirs exist (Linux)
   ansible.builtin.file:
     path: "{{ item }}"
