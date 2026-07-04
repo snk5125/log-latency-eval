@@ -8,14 +8,16 @@
 ---
 # Linux base packages needed by later roles and by the SSM file-transfer path.
 # - python3 : ansible module execution target (PLAN §4.2 aws_ssm).
-# - tar/unzip/curl : fetch + unpack Vector/Cribl/harness artifacts from S3.
+# - tar/unzip : fetch + unpack Vector/Cribl/harness artifacts from S3.
 # - chrony : installed/managed by the time-sync role, listed here so the base
 #   image always has the package available before time-sync runs.
+# NOTE: `curl` is intentionally NOT listed — AL2023 pre-installs `curl-minimal`
+# (which provides /usr/bin/curl); installing full `curl` triggers a dnf depsolve
+# conflict with curl-minimal. curl-minimal is sufficient for our use.
 common_linux_packages:
   - python3
   - tar
   - unzip
-  - curl
   - chrony
 
 # WHY disable unattended upgrades during runs: an apt/dnf automatic update or a

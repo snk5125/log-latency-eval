@@ -6,6 +6,9 @@
   ansible.builtin.dnf:
     name: "{{ common_linux_packages }}"
     state: present
+    # allowerasing lets dnf resolve AL2023 "minimal" package swaps (e.g. a
+    # curl/curl-minimal-style conflict) instead of hard-failing depsolve.
+    allowerasing: true
   # WHY: these are prerequisites for module execution over SSM and for fetching
   # Vector/Cribl/harness artifacts from the S3 artifacts bucket (PLAN §4.3).
 
