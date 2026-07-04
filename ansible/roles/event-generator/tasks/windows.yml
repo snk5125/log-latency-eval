@@ -27,6 +27,10 @@
   become: false
   vars:
     ansible_connection: local   # override play's aws_ssm var (keyword loses to it)
+    # The Windows play sets ansible_shell_type: powershell; on localhost (the
+    # control node) that makes ansible try to run the module via PowerShell
+    # ("/bin/sh: PowerShell: command not found"). Force sh for the delegated task.
+    ansible_shell_type: sh
 
 - name: Stage eventgen.py onto the Windows host (over SSM)
   ansible.windows.win_copy:

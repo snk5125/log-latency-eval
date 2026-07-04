@@ -19,11 +19,12 @@
 # --- PINNED Cribl version --------------------------------------------------
 # Pinned; exact deployed version recorded to evidence (PLAN §7). Cribl publishes
 # a moving "latest" URL and versioned downloads; we pin the version string.
-cribl_edge_version: "4.13.0"
+cribl_edge_version: "4.18.2"
 
-# Cribl provides a combined package; Edge is launched in edge mode. Download
-# uses the versioned CDN path.
-cribl_edge_download_linux: "https://cdn.cribl.io/dl/{{ cribl_edge_version }}/cribl-{{ cribl_edge_version }}-linux-x64.tgz"
+# Cribl provides a combined package; Edge is launched in edge mode. The CDN URL
+# embeds a per-release build hash not derivable from the version, so the full
+# Linux URL is hardcoded (verified 200). Prior 4.13.0/no-hash URL 404'd.
+cribl_edge_download_linux: "https://cdn.cribl.io/dl/4.18.2/cribl-4.18.2-fd1f0d2f-linux-x64.tgz"
 # M3: Cribl does NOT ship a Windows .zip for Edge — Windows install is via MSI.
 # URL follows Cribl's documented download-CDN pattern for the Windows MSI
 # artifact. TODO: confirm the exact 4.13.0 MSI filename/URL against
