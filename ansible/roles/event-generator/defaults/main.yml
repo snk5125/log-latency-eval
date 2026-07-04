@@ -60,4 +60,13 @@ run_id: ""
 # unchanged: llt-eventgen.
 eventgen_service_name: llt-eventgen
 
+# Absolute path to the NSSM binary that role `common` stages on Windows. Defined
+# HERE (not only in common's defaults) because the event-generator play does NOT
+# include the common role, so common_win_nssm_exe would be out of scope in this
+# play — a role must not rely on another role's defaults being in the active
+# play. Kept equal to common_win_nssm_exe (C:\llt\tools\nssm.exe). win_nssm's
+# `executable:` needs this absolute path: the open SSM session's PATH does not
+# yet include C:\llt\tools (installer PATH edits don't reach the running session).
+common_win_nssm_exe: "C:\\llt\\tools\\nssm.exe"
+
 # Cribl Free / license note not relevant here; generator has no license.
