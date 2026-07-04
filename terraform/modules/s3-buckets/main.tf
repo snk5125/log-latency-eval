@@ -229,6 +229,34 @@ data "aws_iam_policy_document" "artifacts_policy" {
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.artifacts.arn]
   }
+
+  # WHY: the aws_ssm Ansible connection to SENDER-account hosts runs its
+  # control-node S3 staging (GetBucketLocation / List / Get / Put on the
+  # transfer objects) with the SENDER account's credentials, not the
+  # generator-host role. Cross-account access therefore needs the sender
+  # account root delegated on this logging-account bucket, or every SSM
+  # connection to a sender host fails with AccessDenied on GetBucketLocation.
+  # Delegating to the account root lets the sender account's own IAM govern
+  # which of its principals (the operator profile) may use the bucket.
+  statement {
+    sid    = "AllowSenderAccountSsmTransfer"
+    effect = "Allow"
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${var.sender_account_id}:root"]
+    }
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+    ]
+    resources = [
+      aws_s3_bucket.artifacts.arn,
+      "${aws_s3_bucket.artifacts.arn}/*",
+    ]
+  }
 }
 
 resource "aws_s3_bucket_policy" "artifacts" {

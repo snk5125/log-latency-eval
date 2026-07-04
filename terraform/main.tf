@@ -99,6 +99,7 @@ module "s3_buckets" {
 
   name_prefix        = "llt"
   logging_account_id = var.logging_account_id
+  sender_account_id  = var.sender_account_id
   expiration_days    = var.landing_final_expiration_days
 
   # Cross-account grant: generator-host roles (sender account) must PutObject to

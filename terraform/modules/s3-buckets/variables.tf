@@ -23,6 +23,11 @@ variable "generator_host_role_arns" {
   type        = list(string)
 }
 
+variable "sender_account_id" {
+  description = "SENDER account ID — delegated on the artifacts bucket so the aws_ssm control-node (sender profile) can stage transfer objects for sender-account hosts."
+  type        = string
+}
+
 variable "common_tags" {
   description = "Common tags applied to all resources (PLAN §7 base tag set)."
   type        = map(string)
