@@ -24,15 +24,22 @@ outputs:
     # Cribl S3 destination formats are json|raw|parquet — "ndjson" is
     # invalid. `format: json` is Cribl's newline-delimited-JSON-per-file mode
     # (parity preserved with Vector's framing.method: newline_delimited).
+    # LIVE-VERIFIED (Cribl 4.18.2): S3 dest ACCEPTS format:json + compress:none.
     format: json
     # TUNING §4.6 item 2 — no compression: also this destination type's own
     # default (unlike Webhook, whose Compress toggle defaults ON — see to_t2
     # below). CPU-for-latency rationale, PLAN §4.6.2.
     compress: none
-    # CONTROLLED CONSTANT (PLAN §4.5): 5 s flush / 10 MB — identical to
-    # Vector. DO NOT CHANGE — not a §4.6 tuning knob.
+    # LIVE-VERIFIED (Cribl 4.18.2): S3 dest REQUIRES stagePath (local assembly
+    # dir before PutObject) — omitting it fails schema validation and the output
+    # never initializes, so NOTHING lands in final/. Use Cribl's own state dir.
+    stagePath: "$CRIBL_HOME/state/outputs/staging"
+    # CONTROLLED CONSTANT (PLAN §4.5): 10 MB — identical to Vector max_bytes.
     maxFileSizeMB: {{ cribl_s3_max_bytes_mb }}
-    maxFileOpenTimeSec: {{ cribl_s3_flush_secs }}
+    # LIVE-VERIFIED (Cribl 4.18.2): maxFileOpenTimeSec min is 10 (5 rejected) —
+    # floored to cribl_s3_open_time_secs (10). The Vector-parity 5 s flush can't
+    # be honored on this knob; maxFileIdleTimeSec has no floor and stays at 5 s.
+    maxFileOpenTimeSec: {{ cribl_s3_open_time_secs }}
     maxFileIdleTimeSec: {{ cribl_s3_flush_secs }}
     # TUNING §4.6 item 3 note: same as cribl-edge's S3 destination — the
     # local file staging governed by maxFileOpenTimeSec/maxFileIdleTimeSec is
@@ -44,7 +51,11 @@ outputs:
     type: webhook
     url: "http://{{ cribl_agg_t2_nlb }}:{{ cribl_t2_http_port }}"
     method: POST
-    format: json           # json, not ndjson (see final_s3 note above)
+    # LIVE-VERIFIED (Cribl 4.18.2): the Webhook `format` enum is
+    # {ndjson,json_array,custom,advanced} — `json` is REJECTED. `ndjson` is
+    # newline-delimited JSON (parity with Vector's newline_delimited). (Unlike
+    # the S3 destination above, whose valid value IS `json` — different enum.)
+    format: ndjson
     # CONTROLLED CONSTANT (PLAN §4.5/§4.6): inter-tier HTTP batch flush stays
     # at 1 s — DO NOT CHANGE, not a §4.6 tuning knob.
     flushPeriodSec: {{ cribl_http_flush_secs }}   # 1 s inter-tier (== Vector)
@@ -53,7 +64,9 @@ outputs:
     # to reach parity with Vector's compression-off default (same as
     # cribl-edge's to_agg_t1 sink; docs.cribl.io/stream/
     # destinations-webhook/).
-    compress: none
+    # LIVE-VERIFIED (Cribl 4.18.2): Webhook `compress` is a BOOLEAN — the string
+    # `none` is REJECTED ("should be boolean"); `false` disables gzip.
+    compress: false
     # TUNING §4.6 item 2 — request concurrency allowed to scale: default 5
     # (range 1-32), raised to cribl_t2_webhook_concurrency (32,
     # defaults/main.yml) — parity counterpart to Vector's adaptive
@@ -88,9 +101,14 @@ outputs:
     # TUNING §4.6 item 2 — no compression (also this destination type's own
     # default). CPU-for-latency rationale, PLAN §4.6.2.
     compress: none
+    # LIVE-VERIFIED (Cribl 4.18.2): S3 dest REQUIRES stagePath (see agg_t1
+    # final_s3 above) — without it the output never initializes.
+    stagePath: "$CRIBL_HOME/state/outputs/staging"
     # CONTROLLED CONSTANT (PLAN §4.5): DO NOT CHANGE — not a §4.6 tuning knob.
     maxFileSizeMB: {{ cribl_s3_max_bytes_mb }}
-    maxFileOpenTimeSec: {{ cribl_s3_flush_secs }}
+    # LIVE-VERIFIED (Cribl 4.18.2): maxFileOpenTimeSec min is 10 (5 rejected) —
+    # floored to cribl_s3_open_time_secs (10); maxFileIdleTimeSec stays at 5 s.
+    maxFileOpenTimeSec: {{ cribl_s3_open_time_secs }}
     maxFileIdleTimeSec: {{ cribl_s3_flush_secs }}
     # TUNING §4.6 item 3 note: no separate buffer/PQ toggle applies to the
     # S3 destination type (see agg_t1's final_s3 comment above).

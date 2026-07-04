@@ -58,6 +58,13 @@ cribl_landing_sqs_url: "https://sqs.us-east-2.amazonaws.com/REPLACE/llt-landing-
 
 # --- Batch constants — CONTROLLED CONSTANT (PLAN §4.5), identical to Vector -
 cribl_s3_flush_secs: 5              # ->S3: 5 s  (== Vector timeout_secs)
+# LIVE-VERIFIED (Cribl 4.18.2): the S3 destination enforces maxFileOpenTimeSec
+# >= 10 ("should be >= 10" schema error at 5) AND requires stagePath. So the 5 s
+# Vector-parity flush cannot be honored on maxFileOpenTimeSec — it is floored to
+# 10 (maxFileIdleTimeSec, which has no floor, stays at 5). This is what made the
+# aggregator's final_s3 output fail to initialize, so NOTHING was written to
+# final/{run_id}/. Recorded as a §4.5 parity asymmetry in docs/TUNING.md.
+cribl_s3_open_time_secs: 10         # S3 dest floor: maxFileOpenTimeSec >= 10
 cribl_s3_max_bytes_mb: 10           # 10 MB      (== Vector max_bytes)
 cribl_http_flush_secs: 1            # inter-tier HTTP: 1 s (== Vector http batch)
 

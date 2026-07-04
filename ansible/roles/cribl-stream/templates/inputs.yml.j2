@@ -14,12 +14,18 @@ inputs:
     port: {{ cribl_t1_http_port }}
     tls:
       disabled: true         # TLS off on internal hops (PLAN §4.4)
-    # JSON Newline Delimited breaker so events get TOP-LEVEL run_id/seq/
-    # host_id/host_os/t_gen_ns/hop_ts fields (analyze.py reads top-level
-    # fields) — without this, the default breaker leaves the whole line in
-    # _raw and the Eval in pipelines/stamp_agg can't see .hop_ts on the event.
+    # NDJSON breaker so events get TOP-LEVEL run_id/seq/host_id/host_os/
+    # t_gen_ns/hop_ts fields (analyze.py reads top-level fields) — without this,
+    # the default breaker leaves the whole line in _raw and the Eval in
+    # pipelines/stamp_agg can't see .hop_ts on the event.
+    # LIVE-VERIFIED (Cribl 4.18.2): the built-in NDJSON ruleset ID is `Cribl`,
+    # NOT the UI label "JSON Newline Delimited". With the wrong id the http_raw
+    # source logs 'rulesets need creating: ["JSON Newline Delimited"]' and then
+    # FAILS to process incoming POSTs (statusCode 500 / request hangs / client
+    # times out) — this is what blocked the Cribl aggregator from ingesting the
+    # Edge agent's forwarded events end-to-end. `Cribl` resolves cleanly.
     breakerRulesets:
-      - "JSON Newline Delimited"
+      - "Cribl"
 {% if scenario in ['s3', 's4'] %}
   s3_in:
     type: s3                 # S3 source == Vector aws_s3 source
@@ -43,9 +49,9 @@ inputs:
     # Cribl rejects/ignores it.
     pollTimeoutSecs: {{ cribl_s3_poll_timeout_secs }}
     # Landing objects are full JSON NDJSON events — same breaker requirement
-    # as http_in above.
+    # as http_in above (built-in ruleset id is `Cribl`, not the UI label).
     breakerRulesets:
-      - "JSON Newline Delimited"
+      - "Cribl"
 {% endif %}
 {% else %}
   http_in:
@@ -55,7 +61,8 @@ inputs:
     tls:
       disabled: true
     # t2 receives the webhook forward from t1, which carries full JSON
-    # events — same breaker requirement as t1's http_in.
+    # events — same breaker requirement as t1's http_in (built-in ruleset id
+    # is `Cribl`, not the UI label "JSON Newline Delimited").
     breakerRulesets:
-      - "JSON Newline Delimited"
+      - "Cribl"
 {% endif %}
