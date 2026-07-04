@@ -52,9 +52,11 @@ compose:
   llt_instance_id: instance_id
   # Per-host SSM profile: hosts discovered by THIS file live in the LOGGING
   # account (Vector + Cribl Stream aggregators), so the aws_ssm connection
-  # must use the logging profile. Overrides the group_vars default so one
-  # play can span both accounts with correct credentials.
-  llt_ssm_profile: lookup('ansible.builtin.env', 'LLT_AWS_PROFILE_LOGGING') | default('llt-logging', true)
+  # must use the logging profile. Sender-file hosts get the sender profile.
+  # NOTE: hardcoded literal, NOT lookup('env',...): lookup() errors silently in
+  # aws_ec2 compose context (strict:false), leaving the profile undefined and
+  # breaking cross-account SSM. Profile names are fixed by convention.
+  llt_ssm_profile: "'llt-logging'"
 
 strict: false
 cache: true

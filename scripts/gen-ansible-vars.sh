@@ -97,7 +97,11 @@ cat > "$OUT_FILE" <<EOF
 
 # --- Global plumbing (PLAN §4.1, §7) -----------------------------------------
 llt_aws_region: "$AWS_REGION"
-llt_ssm_profile: "$LLT_SENDER_PROFILE"      # per-host override composed in inventories
+# NOTE: llt_ssm_profile is intentionally NOT set here. It is composed PER HOST
+# in the aws_ec2 inventories (sender -> sender profile, logging -> logging
+# profile). A group_vars/all default would override that per-host value (group
+# vars win over inventory compose), making every host use one account's profile
+# and breaking cross-account SSM (logging hosts -> TargetNotConnected).
 llt_logging_profile: "$LLT_LOGGING_PROFILE"
 llt_artifacts_bucket: "$llt_artifacts_bucket"
 

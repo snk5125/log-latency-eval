@@ -98,7 +98,7 @@
         dest: "/tmp/llt_clock_{{ run_id }}_{{ inventory_hostname }}.json"
         mode: "0644"
       delegate_to: localhost
-      connection: local
+      vars: { ansible_connection: local }
       # Delegate the file write to the control node so we can push it to S3 with
       # a single profile-aware aws_s3 call (below), independent of host OS.
       # become: true is set at play level for the SSM-connected host (C1); this
@@ -114,7 +114,7 @@
         region: "{{ llt_aws_region }}"
         profile: "{{ llt_logging_profile | default(omit) }}"
       delegate_to: localhost
-      connection: local
+      vars: { ansible_connection: local }
       # Bucket lives in the logging account (PLAN §4.3), so use the logging
       # profile for the PutObject, not the host's SSM session profile.
       become: false
@@ -225,7 +225,7 @@
         dest: "/tmp/llt_clock_{{ run_id }}_{{ inventory_hostname }}.json"
         mode: "0644"
       delegate_to: localhost
-      connection: local
+      vars: { ansible_connection: local }
 
     - name: Upload Windows clock evidence to artifacts S3 bucket (PLAN §5.3)
       amazon.aws.s3_object:
@@ -236,7 +236,7 @@
         region: "{{ llt_aws_region }}"
         profile: "{{ llt_logging_profile | default(omit) }}"
       delegate_to: localhost
-      connection: local
+      vars: { ansible_connection: local }
 
     - name: Fail the run now if this Windows host's clock assertion failed
       ansible.builtin.assert:

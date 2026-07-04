@@ -6,7 +6,6 @@
 
 # --- Global plumbing (PLAN §4.1, §7) -----------------------------------------
 llt_aws_region: "us-east-2"
-llt_ssm_profile: "llt-sender"        # per-host override composed in inventories
 llt_logging_profile: "llt-logging"
 llt_artifacts_bucket: "llt-artifacts-111111111111"
 

@@ -53,10 +53,14 @@ compose:
   llt_private_ip: private_ip_address
   llt_instance_id: instance_id
   # Per-host SSM profile: hosts discovered by THIS file live in the SENDER
-  # account, so the aws_ssm connection must use the sender profile. This
-  # per-host value overrides the group_vars default (generated_infra.yml),
-  # letting one play span both accounts with correct credentials.
-  llt_ssm_profile: lookup('ansible.builtin.env', 'LLT_AWS_PROFILE_SENDER') | default('llt-sender', true)
+  # account, so the aws_ssm connection must use the sender profile. Hosts in the
+  # logging file get the logging profile. This per-host value lets one play span
+  # both accounts with correct credentials.
+  # NOTE: hardcoded literal, NOT lookup('env',...): `lookup()` errors silently
+  # in aws_ec2 `compose` context (strict:false drops it -> profile ends up
+  # undefined -> logging hosts use the wrong account -> TargetNotConnected).
+  # The profile names are fixed by convention (terraform.tfvars sender_profile).
+  llt_ssm_profile: "'llt-sender'"
 
 strict: false
 cache: true
