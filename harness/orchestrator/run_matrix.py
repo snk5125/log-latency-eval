@@ -38,6 +38,7 @@ import fnmatch
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -259,12 +260,36 @@ class Aws(object):
 # ---------------------------------------------------------------------------
 # Ansible invocation
 # ---------------------------------------------------------------------------
+def _ssm_plugin_extra_vars():
+    """Extra-vars needed so the aws_ssm connection plugin can find its binary.
+
+    All hosts are SSM-only (PLAN §4.2), so every playbook the orchestrator drives
+    connects via the aws_ssm plugin, which shells out to `session-manager-plugin`.
+    That binary's path is a CONTROL-NODE-LOCAL concern (not infra state), so it is
+    NOT in group_vars/inventory; the operator supplies it. Interactive/manual runs
+    pass `-e ansible_aws_ssm_plugin=<path>` on the CLI (see HANDOFF env recipe), but
+    run_matrix shells out to configure-scenario.yml / assert-clocks.yml itself and
+    must forward the same override or the plugin defaults to
+    /usr/local/bin/session-manager-plugin — absent on many control nodes, which
+    fails every SSM task with "failed to find the executable specified".
+
+    Resolution order: $LLT_SSM_PLUGIN, else `session-manager-plugin` on $PATH
+    (its resolved absolute path). Returns {} if neither is available, leaving the
+    plugin's own default in place (so behavior is unchanged where the binary IS at
+    the default path).
+    """
+    plugin = os.environ.get("LLT_SSM_PLUGIN") or shutil.which("session-manager-plugin")
+    return {"ansible_aws_ssm_plugin": plugin} if plugin else {}
+
+
 def run_ansible(playbook, extra_vars, dry_run):
     """Invoke ansible-playbook with -e JSON extra-vars. Returns True on success."""
+    merged_vars = dict(extra_vars)
+    merged_vars.update(_ssm_plugin_extra_vars())
     cmd = [
         "ansible-playbook",
         playbook,
-        "-e", json.dumps(extra_vars),
+        "-e", json.dumps(merged_vars),
     ]
     if dry_run:
         print("    [dry-run] would run: %s" % " ".join(cmd))
