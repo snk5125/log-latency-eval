@@ -31,6 +31,11 @@ inputs:
     type: s3                 # S3 source == Vector aws_s3 source
     region: "{{ cribl_aws_region }}"
     # Event-driven pickup via SQS (PLAN §4.3), ENABLED ONLY in S3/S4.
+    # LIVE-VERIFIED (cs-t1, Cribl 4.18.2): `queueName` ACCEPTS a full SQS URL —
+    # the source parses it, logging `Creating SQS API instance ...
+    # queueName:"llt-landing-cs-q" ... extractedRegion:"us-east-2"` (it extracts
+    # the bare queue name + region from the URL). `started pollers count:3`
+    # confirms the SQS consumer initialized cleanly against the landing queue.
     queueName: "{{ cribl_landing_sqs_url }}"
     # TUNING §4.6 item 4 — SQS long-poll wait raised to the 20 s ceiling
     # (cribl_s3_poll_timeout_secs, defaults/main.yml) — Cribl's own field is
@@ -41,12 +46,9 @@ inputs:
     # approximation to "event-driven" pickup for a poll-based consumer.
     # Parity counterpart to Vector's sqs.poll_secs: 20
     # (vector-aggregator/templates/vector-agg.yaml.j2).
-    # TODO(verify): could not confirm the exact underlying JSON key name
-    # (UI label "Poll timeout (secs)" only) against the live 4.13
-    # inputs.yml schema for the S3 source type — `pollTimeoutSecs` is a
-    # best-guess camelCase rendering of the UI label; verify against
-    # $CRIBL_HOME/local/cribl/inputs.yml on a live node and correct if
-    # Cribl rejects/ignores it.
+    # LIVE-VERIFIED (cs-t1, Cribl 4.18.2): `pollTimeoutSecs` is the correct key —
+    # the s3_in input initializes with `pollTimeoutSecs:20` in its config echo
+    # and no schema rejection (earlier TODO(verify) resolved).
     pollTimeoutSecs: {{ cribl_s3_poll_timeout_secs }}
     # Landing objects are full JSON NDJSON events — same breaker requirement
     # as http_in above (built-in ruleset id is `Cribl`, not the UI label).
