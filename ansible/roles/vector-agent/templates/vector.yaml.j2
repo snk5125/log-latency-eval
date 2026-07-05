@@ -184,6 +184,16 @@ sinks:
     inputs: [stamp_agent]
     bucket: "{{ llt_landing_bucket }}"
     region: "{{ vector_aws_region }}"
+    # Skip the startup healthcheck: it does a HeadBucket/GetBucketLocation, which
+    # needs s3:ListBucket — but the generator role is scoped to s3:PutObject ONLY
+    # on the (cross-account) landing bucket (least privilege; terraform iam
+    # generator_s3 + s3-buckets landing policy both grant PutObject only). The
+    # healthcheck 403s ("Healthcheck failed. error=Invalid credentials") and
+    # aborts `vector validate` at configure-scenario, even though the runtime
+    # PutObject works. Disabling it is the correct fix for a write-only sink
+    # (mirrors the to_agg_t1 sink above); do NOT widen the IAM grant to satisfy it.
+    healthcheck:
+      enabled: false
     # Key prefix carries run_id + host_os so analysis can attribute landing
     # objects per run/OS (PLAN §5.1 host_os dimension).
     key_prefix: "landing/{{ run_id }}/{{ 'windows' if ansible_os_family == 'Windows' else 'linux' }}/"
