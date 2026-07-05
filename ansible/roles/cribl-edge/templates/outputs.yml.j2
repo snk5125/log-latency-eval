@@ -70,6 +70,21 @@ outputs:
     type: s3
     bucket: "{{ llt_landing_bucket }}"
     region: "{{ cribl_edge_aws_region }}"
+    # LIVE-VERIFIED (Cribl 4.18.2): Cribl's S3 destination runs a startup
+    # verifyAndGetBucketRegionV3 pre-flight (a HeadBucket/GetBucketLocation
+    # probe) needing s3:ListBucket/s3:GetBucketLocation. The generator role is
+    # s3:PutObject-ONLY on the cross-account landing bucket (least privilege;
+    # terraform iam generator_s3 + s3-buckets landing policy grant PutObject
+    # only). So the probe 403s and the destination logs "error initializing ...
+    # Bucket does not exist - bucket access forbidden" (from
+    # M.verifyAndGetBucketRegionV3) and never writes — even though runtime
+    # PutObject works. `verifyPermissions: false` skips that pre-flight (Cribl
+    # docs: "Disable if you can access files within the bucket but not the
+    # bucket itself"). This is Cribl Edge's exact analogue of the Vector agent
+    # aws_s3 `healthcheck: enabled: false` fix (commit 2012cc2); region is set
+    # explicitly above so no bucket-region lookup is needed. Do NOT widen the
+    # IAM grant to satisfy the probe.
+    verifyPermissions: false
     # Key prefix carries run_id + host_os, identical scheme to the Vector aws_s3
     # sink (PLAN §5.1 host_os dimension). M7: destPath is a JS TEMPLATE LITERAL
     # in Cribl (backtick-delimited with ${...} interpolation), not a plain
