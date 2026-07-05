@@ -10,6 +10,23 @@ Authoritative specification: [`../PLAN.md`](../PLAN.md). Architecture detail:
 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md). Operations:
 [`../docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
+> **Scope — measured results are LINUX-ONLY (execution-time deviation from the
+> PLAN's Linux+Windows design).** The experiment was built and deployed for
+> concurrent Linux + Windows generators, but Windows measurement was excluded
+> during execution after three independent failures made Windows data unreliable:
+> (1) **Clock** — Windows w32time could not hold the PLAN §5.3 5 ms bound
+> (oscillated 5–8 ms under load), forcing a relaxation to 20 ms that leaves the
+> sub-ms Windows gen→agent hop clock-noise-dominated (indicative-only);
+> (2) **Generator staleness** — the Windows generator's per-cell config went stale
+> in-matrix (a `win_template`-over-SSM rendering class), so Windows generators ran
+> at the wrong EPS and produced ~0 landed events in ~92 % of cells (2 of 24 S1/S2
+> cells had Windows data); (3) **NSSM restart** — NSSM relaunched the Windows
+> generator on self-exit, double-generating (fixed, but on top of the above).
+> The Linux estate (chrony < 1 ms, dup = 0, both agents × both aggregators × 4
+> scenarios × 3 volumes) is complete and high-quality and fully answers the
+> research question. Windows is reported as **ATTEMPTED / OUT-OF-SCOPE** with these
+> reasons; **no Windows latency numbers are claimed.** See §3.5 and §5.
+
 ---
 
 ## 1. Executive Summary
@@ -17,8 +34,8 @@ Authoritative specification: [`../PLAN.md`](../PLAN.md). Architecture detail:
 `[PENDING RESULTS]` — Complete after analysis. This section will state, in
 plain terms: (a) how much average latency each additional hop adds, per scenario;
 (b) whether event volume (1k / 5k / 10k EPS) measurably changes those additions;
-(c) the Linux vs Windows split; and (d) the principal constraints that bound the
-conclusions. All quantitative claims here must trace to §7 Findings and the
+(c) that results are **Linux-only** (Windows out-of-scope — see the Scope note
+above); and (d) the principal constraints that bound the conclusions. All quantitative claims here must trace to §7 Findings and the
 evidence in §8. Do not summarize beyond what the analyzer output supports.
 
 ---
