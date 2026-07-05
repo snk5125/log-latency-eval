@@ -55,6 +55,14 @@
 - name: Re-template event generator config for this run
   hosts: role_generator
   gather_facts: true
+  # gather_subset excludes date_time: the Windows `setup` module intermittently
+  # emits a stray \r in ansible_date_time over the SSM/PowerShell transport
+  # (worse under generator load), corrupting the module's JSON framing ->
+  # "MODULE FAILURE" DESPITE complete facts, which aborts the whole cell. This is
+  # the SAME fix site.yml already carries (3662e6b); configure-scenario needs it
+  # too — critically for the Linux-only run, where a flaky Windows generator host
+  # must not block Linux data collection.
+  gather_subset: ["all", "!date_time"]
   # Mixed OS play: aws_ssm connects as ssm-user on Linux (C1) but as SYSTEM on
   # Windows, so escalate only for Linux group members. group_names-keyed (M9)
   # rather than gathered facts, so this is stable mid-matrix.
@@ -81,6 +89,7 @@
 - name: Re-template Vector agent config for this scenario
   hosts: role_generator
   gather_facts: true
+  gather_subset: ["all", "!date_time"]   # win date_time \r JSON-framing guard (see gen-config play)
   # Mixed OS play — see become rationale above (C1/M9).
   become: "{{ 'os_linux' in group_names }}"
   vars:
@@ -102,6 +111,7 @@
 - name: Re-template Cribl Edge config for this scenario
   hosts: role_generator
   gather_facts: true
+  gather_subset: ["all", "!date_time"]   # win date_time \r JSON-framing guard (see gen-config play)
   # Mixed OS play — see become rationale above (C1/M9).
   become: "{{ 'os_linux' in group_names }}"
   vars:
