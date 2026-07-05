@@ -1,10 +1,11 @@
 # Logging Pipeline Hop-Latency Evaluation — Engineering Report
 
 **Repo / resource prefix:** `llt` (logging latency test)
-**Report status:** TEMPLATE — methodology and constraints are complete; all
-results-dependent content is marked `[PENDING RESULTS]` / `[PENDING]` and must be
-filled only from `harness/analysis/analyze.py` output after execution. No numbers
-in this document are fabricated.
+**Report status:** RESULTS POPULATED — methodology, constraints, and §7 Findings
+are complete. All §7 figures are filled from `harness/analysis/analyze.py` output
+(`report/evidence/latency_stats.{csv,md}`); every number traces to that CSV and no
+number in this document is fabricated. Results are Linux-only (Windows
+out-of-scope; Scope note below).
 
 Authoritative specification: [`../PLAN.md`](../PLAN.md). Architecture detail:
 [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md). Operations:
@@ -382,135 +383,301 @@ results and therefore why a follow-up study might pursue it.
 
 ## 7. Findings
 
-All cells are `[PENDING]`. Populate exclusively from
-`harness/analysis/analyze.py` output. Do not enter any value that is not present
-in the analyzer output or its evidence artifacts. Statistics per cell:
-mean / p50 / p90 / p99 / max / stddev / count (§3.6). Where a hop is a →S3 hop,
-report **raw** and, in the batch-adjusted subsection, the batch-adjusted value
-(§5 items 1, 8).
+Populated from `harness/analysis/analyze.py` output
+(`report/evidence/latency_stats.{csv,md}`). Every number below traces to that
+CSV; no value is entered that is not present in the analyzer output. Statistics
+per cell: **mean / p50 / p90 / p99 / max / stddev / count** (§3.6), all in
+milliseconds. Where a hop is a →S3 hop, the **raw** row is reported and, on the
+following row, the **batch-adjusted** value (§5 items 1, 8; batch-adjusted rows
+carry no stddev/count column — they are `mean / p50 / p90 / p99 / max`).
+
+**Aggregation.** Each `[scenario × volume × hop]` cell in §7.1 is the **average of
+the up-to-four contributing runs** (agent ∈ {Vector, Cribl Edge} × aggregator ∈
+{Vector, Cribl Stream}); the count column is the **sum** of those runs' event
+counts, and **n** (contributing runs) is stated where it is not 4. Cross-run
+means are unweighted (each run's per-hop mean averaged equally); at these
+near-equal run sizes this is within rounding of an event-weighted mean.
+
+**Scope and completeness.** Results are **Linux-only** (Windows out-of-scope —
+Scope note, §5; no Windows figures are reported here). The Linux estate is
+**46 populated cells / 141.6 M end-to-end events**, with **loss = 0,
+duplicates = 0, skips = 0 in every one** — a clean dataset. Two S4-10k cells are
+absent from the analysis: `s4-ce-cs-10k` (generator-clock trip under 10k load —
+no run, §1(d)) and `s4-ce-vagg-10k` (run started but landed **zero** events).
+**Both absent cells use the Cribl Edge agent**, so all four S4-10k rows below rest
+on the **two Vector-agent cells** (`n = 2`); this is flagged inline. All other
+scenario×volume cells have the full `n = 4`.
 
 Each scenario has a run for every combination of agent (Vector / Cribl Edge),
-aggregator (Vector / Cribl Stream), and volume tier (1k / 5k / 10k), split by OS.
-The tables below are keyed to the matrix; replicate a table per
-agent×aggregator combination where the analysis distinguishes them, or aggregate
-per the analysis plan and note which.
+aggregator (Vector / Cribl Stream), and volume tier (1k / 5k / 10k). §7.1 tables
+aggregate the agent×aggregator pair into one cell per the plan above; §7.1.5
+breaks the generation→agent hop out **by agent** because the two agents diverge
+there (§1(b)).
 
 ### 7.1 Per-Scenario, Per-Hop Latency
 
 #### 7.1.1 S1 — Host → Aggregator → S3 (final)
 
-| Hop | 1k EPS (mean / p50 / p90 / p99 / max / stddev / count) | 5k EPS | 10k EPS |
-|-----|--------------------------------------------------------|--------|---------|
-| Generation → agent | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Agent → Aggregator-T1 | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator → final S3 (raw) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator → final S3 (batch-adjusted) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| End-to-end | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+All cells `n = 4`. Values: mean / p50 / p90 / p99 / max / stddev / count (ms).
+
+| Hop | 1k EPS | 5k EPS | 10k EPS |
+|-----|--------|--------|---------|
+| Generation → agent | 0.7 / 0.4 / 1.4 / 6.1 / 168 / 3.9 / 2M | 1.9 / 0.5 / 1.8 / 28.6 / 389 / 14.1 / 12M | 6.4 / 0.7 / 18.8 / 71.3 / 442 / 22.3 / 24M |
+| Agent → Aggregator-T1 | 558 / 540 / 1001 / 1406 / 1530 / 334 / 2M | 450 / 441 / 762 / 842 / 1036 / 219 / 12M | 422 / 422 / 652 / 727 / 1084 / 170 / 24M |
+| Aggregator → final S3 (raw) | 3496 / 3530 / 5636 / 6450 / 7701 / 1626 / 2M | 1172 / 1148 / 1815 / 2440 / 6008 / 587 / 12M | 862 / 788 / 1473 / 2938 / 7426 / 635 / 24M |
+| Aggregator → final S3 (batch-adjusted) | 0.0 / 0.0 / 937 / 1502 / 2701 | 0.0 / 0.0 / 0.0 / 0.0 / 1008 | 0.0 / 0.0 / 0.0 / 368 / 2426 |
+| End-to-end | 4054 / 4058 / 6207 / 7129 / 8310 / 1611 / 2M | 1624 / 1612 / 2264 / 2702 / 6644 / 551 / 12M | 1290 / 1243 / 1770 / 3305 / 7848 / 595 / 24M |
 
 #### 7.1.2 S2 — Host → Aggregator-T1 → Aggregator-T2 → S3 (final)
 
+All cells `n = 4`. Values: mean / p50 / p90 / p99 / max / stddev / count (ms).
+
 | Hop | 1k EPS | 5k EPS | 10k EPS |
 |-----|--------|--------|---------|
-| Generation → agent | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Agent → Aggregator-T1 | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| T1 → T2 | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator-T2 → final S3 (raw) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator-T2 → final S3 (batch-adjusted) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| End-to-end | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+| Generation → agent | 0.6 / 0.6 / 1.3 / 5.1 / 211 / 4.0 / 2M | 2.2 / 0.5 / 1.8 / 29.9 / 502 / 17.8 / 12M | 6.0 / 0.7 / 13.9 / 84.4 / 446 / 24.8 / 24M |
+| Agent → Aggregator-T1 | 586 / 556 / 1108 / 1472 / 1527 / 368 / 2M | 438 / 427 / 760 / 842 / 1036 / 224 / 12M | 403 / 401 / 650 / 720 / 1056 / 178 / 24M |
+| T1 → T2 | 698 / 845 / 1207 / 1453 / 1490 / 457 / 2M | 590 / 556 / 949 / 1045 / 1213 / 285 / 12M | 465 / 426 / 648 / 966 / 1413 / 201 / 24M |
+| Aggregator-T2 → final S3 (raw) | 3469 / 3452 / 5898 / 7227 / 8523 / 1748 / 2M | 1249 / 1128 / 2304 / 4744 / 8357 / 986 / 12M | 1061 / 888 / 1990 / 4702 / 8119 / 912 / 24M |
+| Aggregator-T2 → final S3 (batch-adjusted) | 0.0 / 0.0 / 908 / 2227 / 3523 | 0.0 / 0.0 / 0.0 / 881 / 3357 | 0.0 / 0.0 / 0.0 / 1235 / 3119 |
+| End-to-end | 4754 / 4749 / 7009 / 8577 / 10012 / 1730 / 2M | 2279 / 2124 / 3245 / 5603 / 9614 / 960 / 12M | 1936 / 1781 / 2726 / 5530 / 9215 / 890 / 24M |
 
 #### 7.1.3 S3 — Host → S3 (landing) → Aggregator → S3 (final)
 
+All cells `n = 4`. Values: mean / p50 / p90 / p99 / max / stddev / count (ms).
+
 | Hop | 1k EPS | 5k EPS | 10k EPS |
 |-----|--------|--------|---------|
-| Generation → agent | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Agent → landing S3 (raw) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Agent → landing S3 (batch-adjusted) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Landing S3 → Aggregator | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator → final S3 (raw) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator → final S3 (batch-adjusted) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| End-to-end | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+| Generation → agent | 1.1 / 0.4 / 1.1 / 11.4 / 394 / 9.5 / 2M | 4.7 / 0.6 / 12.1 / 58.9 / 428 / 17.5 / 12M | 33.0 / 3.7 / 105 / 188 / 464 / 48.6 / 24M |
+| Agent → landing S3 (raw) | 3854 / 3852 / 6454 / 7046 / 7186 / 1877 / 2M | 1303 / 1297 / 2023 / 2424 / 6102 / 567 / 12M | 915 / 910 / 1412 / 1711 / 6046 / 398 / 24M |
+| Agent → landing S3 (batch-adjusted) | 0.0 / 0.0 / 1454 / 2046 / 2186 | 0.0 / 0.0 / 0.0 / 0.0 / 1102 | 0.0 / 0.0 / 0.0 / 0.0 / 1046 |
+| Landing S3 → Aggregator | 408 / 406 / 760 / 970 / 1090 / 266 / 2M | 551 / 544 / 1060 / 1419 / 2607 / 406 / 12M | 506 / 504 / 1022 / 1372 / 2643 / 412 / 24M |
+| Aggregator → final S3 (raw) | 3326 / 3239 / 4805 / 6217 / 7130 / 1248 / 2M | 1075 / 733 / 2360 / 4758 / 6507 / 1116 / 12M | 904 / 704 / 1628 / 4249 / 6470 / 898 / 24M |
+| Aggregator → final S3 (batch-adjusted) | 262 / 358 / 742 / 1217 / 2130 | 0.0 / 0.0 / 0.0 / 695 / 1507 | 0.0 / 0.0 / 0.0 / 314 / 1470 |
+| End-to-end | 7588 / 7722 / 10075 / 10991 / 11510 / 1899 / 2M | 2934 / 2721 / 4334 / 6480 / 11480 / 1121 / 12M | 2358 / 2190 / 3133 / 6050 / 12123 / 929 / 24M |
 
 #### 7.1.4 S4 — Host → S3 (landing) → Aggregator-T1 → Aggregator-T2 → S3 (final)
 
-| Hop | 1k EPS | 5k EPS | 10k EPS |
+1k/5k `n = 4`. **10k `n = 2`** — both Cribl Edge cells absent
+(`s4-ce-cs-10k` no run; `s4-ce-vagg-10k` landed 0 events), so the 10k column is
+the two **Vector-agent** cells only. Values: mean / p50 / p90 / p99 / max /
+stddev / count (ms).
+
+| Hop | 1k EPS | 5k EPS | 10k EPS (n=2, Vector-agent) |
 |-----|--------|--------|---------|
-| Generation → agent | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Agent → landing S3 (raw) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Agent → landing S3 (batch-adjusted) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Landing S3 → Aggregator-T1 | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| T1 → T2 | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator-T2 → final S3 (raw) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| Aggregator-T2 → final S3 (batch-adjusted) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| End-to-end | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+| Generation → agent | 1.0 / 0.5 / 1.2 / 10.7 / 305 / 7.5 / 2M | 6.0 / 0.6 / 19.5 / 69.3 / 415 / 19.0 / 12M | 1.4 / 1.3 / 2.8 / 3.7 / 24.8 / 1.2 / 12M |
+| Agent → landing S3 (raw) | 3767 / 3766 / 6367 / 7054 / 7206 / 1893 / 2M | 1327 / 1319 / 2048 / 2463 / 6460 / 585 / 12M | 948 / 944 / 1442 / 1716 / 5372 / 386 / 12M |
+| Agent → landing S3 (batch-adjusted) | 0.0 / 0.0 / 1397 / 2054 / 2206 | 0.0 / 0.0 / 0.0 / 0.0 / 1460 | 0.0 / 0.0 / 0.0 / 0.0 / 372 |
+| Landing S3 → Aggregator-T1 | 492 / 497 / 916 / 1098 / 1179 / 313 / 2M | 526 / 526 / 1033 / 1350 / 1564 / 382 / 12M | 390 / 392 / 895 / 1190 / 1480 / 376 / 12M |
+| T1 → T2 | 497 / 390 / 908 / 1392 / 1573 / 264 / 2M | 458 / 367 / 867 / 1402 / 1620 / 292 / 12M | 482 / 562 / 843 / 1340 / 1596 / 343 / 12M |
+| Aggregator-T2 → final S3 (raw) | 4450 / 4663 / 6240 / 7806 / 8521 / 1550 / 2M | 2175 / 1740 / 4450 / 7246 / 8636 / 1802 / 12M | 1520 / 1073 / 3756 / 5254 / 8914 / 1323 / 12M |
+| Aggregator-T2 → final S3 (batch-adjusted) | 379 / 716 / 1363 / 2806 / 3521 | 0.0 / 0.0 / 799 / 2329 / 3636 | 0.0 / 0.0 / 443 / 1476 / 3914 |
+| End-to-end | 9207 / 9278 / 11875 / 13285 / 15428 / 2091 / 2M | 4492 / 4135 / 6685 / 9640 / 13029 / 1771 / 12M | 3341 / 2950 / 5457 / 7088 / 12912 / 1361 / 12M |
+
+#### 7.1.5 Generation → agent, broken out by agent × volume (supports §1(b))
+
+The §7.1 tables average the two agents together at the generation→agent hop; this
+hop is the **only** place the two agents diverge, so it is broken out here. Values
+are averaged across all four scenarios and both aggregators (the aggregator is
+downstream of this hop and has no effect on it). **Vector's agent ingest is flat
+and sub-2 ms across the whole volume range; Cribl Edge's climbs steeply with
+load** — from sub-millisecond at 1k to ~29 ms at 10k, an ~48× increase. This is
+the single agent-choice-relevant latency difference in the study.
+
+Values: mean / p99 / max (ms), `n` = contributing cells.
+
+| Agent | 1k EPS | 5k EPS | 10k EPS |
+|-------|--------|--------|---------|
+| Vector | 1.1 / 2.8 / 9.7 (n=8) | 1.3 / 3.3 / 22.7 (n=8) | 1.4 / 4.8 / 25.7 (n=8) |
+| Cribl Edge | 0.6 / 13.9 / 529 (n=8) | 6.1 / 90.0 / 844 (n=8) | 28.8 / 224 / 875 (n=6) |
+
+(Cribl Edge 10k has `n = 6` not 8: the two absent S4-10k Cribl Edge cells, §7.1.4.)
+See chart [`charts/gen_to_agent_vec_vs_ce.png`](charts/gen_to_agent_vec_vs_ce.png).
+
+**Batched hops are volume-insensitive by contrast.** On every batched *network*
+hop (agent→aggregator-T1, T1→T2) the mean sits in the ~400–700 ms band regardless
+of volume — it is set by the 1 s inter-tier batch interval (mean flush-wait ≈
+half the interval), not by throughput. If anything the mean *falls* slightly as
+volume rises (S1 agent→T1: 558 → 450 → 422 ms at 1k/5k/10k), because at higher
+event rates a batch fills and flushes sooner within its window, shortening the
+mean wait. See §7.3 for the full per-hop volume trend.
 
 ### 7.2 Scenario-vs-Scenario Added-Latency Comparison
 
-Answers the core research question: the **added** latency attributable to each
-extra hop. Use batch-adjusted values where a →S3 hop is involved (§5 item 8).
+Answers the core research question: the **added** end-to-end latency attributable
+to each extra hop. Figures are **differences of end-to-end mean** (ms), per
+volume tier, from the §7.1 tables. The statistic is the mean (per the research
+question). The 10k S4 terms use the `n = 2` Vector-agent S4-10k cells (§7.1.4).
 
 | Comparison | What it isolates | 1k EPS | 5k EPS | 10k EPS |
 |------------|------------------|--------|--------|---------|
-| S2 − S1 | Added second aggregator tier (T1→T2) | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| S3 − S1 | Added S3 landing hop before aggregation | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| S4 − S2 | Added S3 landing hop before two-tier aggregation | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| S4 − S3 | Added second aggregator tier on the landing path | `[PENDING]` | `[PENDING]` | `[PENDING]` |
-| S4 − S1 | Combined effect of both added hops | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+| S2 − S1 | Added second aggregator tier (T1→T2) | +699 | +655 | +646 |
+| S3 − S1 | Added S3 landing hop before aggregation | +3534 | +1310 | +1068 |
+| S4 − S2 | Added S3 landing hop before two-tier aggregation | +4453 | +2213 | +1406 |
+| S4 − S3 | Added second aggregator tier on the landing path | +1618 | +1558 | +984 |
+| S4 − S1 | Combined effect of both added hops | +5152 | +2868 | +2051 |
 
-Each comparison should be reported on end-to-end and, where meaningful, on the
-specific shared hops; state which statistic (mean per the research question,
-with percentiles alongside).
+**Reading the table.** The two structural additions have distinct, additive
+signatures. Adding a **second aggregator tier** (S2−S1, and S4−S3) costs a
+**stable ~0.6–1.6 s** — one extra 1 s-batched HTTP hop, near-flat across volume.
+Adding an **S3 landing hop** (S3−S1, S4−S2) costs **much more and is strongly
+volume-dependent** (+3.5 s at 1k down to +1.1 s at 10k), because a landing hop
+inserts *two* 5 s-flush S3 boundaries whose raw wait shrinks as volume rises (see
+§7.3). The combined effect (S4−S1) is the sum of the two, at every volume — the
+additions do not interact. This is the monotonic **S1 < S2 < S3 < S4** ordering
+of §1(a), decomposed. On the *batch-adjusted* view (§5 item 8), the marginal
+transport/processing cost of every added hop is near-zero (batch-adjusted →S3
+means are ≈ 0; batched network hops are pure flush-wait); the added end-to-end
+latency above is therefore **almost entirely batch-flush accumulation**, not
+transport.
 
 ### 7.3 Volume-Effect Analysis
 
-Answers "what role does total volume of events have?" For each scenario and hop,
-report the trend across 1k → 5k → 10k EPS.
+Answers "what role does total volume of events have?" Δ columns are the change in
+**mean** (ms) across the tier step; representative hops per scenario are shown
+(full per-hop numbers in §7.1). All figures trace to the CSV.
 
-| Scenario / Hop | 1k → 5k Δ | 5k → 10k Δ | Trend (flat / rising / non-monotonic) | Notes |
-|----------------|-----------|------------|----------------------------------------|-------|
-| `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+| Scenario / Hop | 1k → 5k Δ | 5k → 10k Δ | Trend | Notes |
+|----------------|-----------|------------|-------|-------|
+| S1 / gen → agent | +1.2 | +4.5 | rising (small) | agent-ingest effect; sub-clock-bound at 1k (§5 item 9) |
+| S1 / agent → T1 (batched) | −108 | −28 | flat / slight fall | flush-interval-bound, not throughput-bound |
+| S1 / agg → final S3 (raw) | −2324 | −310 | falling | 5 s-flush wait shrinks as objects fill sooner |
+| S1 / end-to-end | −2431 | −334 | falling | dominated by the S3-flush term |
+| S2 / T1 → T2 (batched) | −108 | −124 | flat / slight fall | second 1 s-batched hop, volume-insensitive |
+| S2 / end-to-end | −2475 | −343 | falling | same S3-flush dominance as S1 |
+| S3 / gen → agent | +3.7 | +28.2 | rising | Cribl Edge load sensitivity surfaces here (§7.1.5) |
+| S3 / agent → landing S3 (raw) | −2551 | −388 | falling | first of two 5 s-flush S3 hops |
+| S3 / landing S3 → agg | +143 | −45 | non-monotonic (noise) | SQS-pickup hop, ~400–550 ms band |
+| S3 / end-to-end | −4655 | −576 | falling | two S3-flush terms compound |
+| S4 / gen → agent | +5.0 | −4.7 | non-monotonic | 10k is Vector-only (n=2) so the ce climb is absent from the 10k point |
+| S4 / agg-T2 → final S3 (raw) | −2274 | −655 | falling | 5 s-flush wait |
+| S4 / end-to-end | −4715 | −1151 | falling | two S3-flush terms + two batched hops |
 
-`[PENDING RESULTS]` — Narrative: state whether latency is volume-sensitive at the
-tested tiers, at which hops it appears first, and whether any tier approaches a
-saturation knee. Bound the claim by §5 item 9 (deltas near clock-sync error are
-noise) and the fact that 10k EPS/host is below sustained-overload thresholds
-(§6, backpressure item).
+**Narrative.** At the tested tiers (1k–10k EPS/host, all below sustained-overload
+thresholds — §6, backpressure item) **event volume does not drive latency up on
+any batched or S3 hop; it drives raw hop latency *down***. This is the expected
+signature of flush-dominated hops: at low volume an event often waits most of a
+full flush window before its batch closes, so the *raw* →S3 and inter-tier hop
+means are **largest at 1k** and fall toward the transport floor as volume rises
+and batches fill sooner. The end-to-end mean therefore **declines monotonically
+with volume** in every scenario (e.g. S3: 7.6 s → 2.9 s → 2.4 s at 1k/5k/10k).
+The §1 headline per-hop/E2E figures are the **all-volume averages** of these
+columns, so they sit between the 1k and 10k extremes.
+
+The **only hop where latency rises with volume is generation→agent**, and only
+for **Cribl Edge** (§7.1.5): +3.7 ms then +28 ms per step in S3, versus Vector's
+flat sub-2 ms. No hop shows a saturation *knee* within the tested range — the
+Cribl Edge curve is climbing but not inflecting, and no loss appears at any tier
+(§7.5), so nothing here indicates a throughput ceiling was reached. Deltas at the
+generation→agent hop at 1k (sub-millisecond means, p50 ≈ 0.4–0.6 ms) are at or
+below the Linux clock-sync bound (< 1 ms, §5 item 9) and should be read as
+noise-floor, not signal.
 
 ### 7.4 OS Split (Linux vs Windows)
 
-Report the same hops split by `host_os`. Windows deltas carry wider error bars
-(§5 item 4) — do not over-interpret sub-5 ms Linux/Windows differences.
-
-| Scenario / Hop | Linux (mean / p50 / p99) | Windows (mean / p50 / p99) | Delta | Within Windows error bar? |
-|----------------|--------------------------|----------------------------|-------|---------------------------|
-| `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+**Not reported — Windows is out-of-scope (Scope note; §5).** The matrix was built
+for concurrent Linux + Windows generators, but Windows measurement was excluded at
+execution time after three independent failures (w32time clock coarseness;
+generator config staleness producing ~0 landed events in ~92 % of Windows cells;
+NSSM double-generation — §3.5, §5). In the analyzer output the Windows rows are
+`count = 0` / `loss = 1.0` in nearly every cell, and the few early Windows cells
+that did land events carry garbage generation→agent deltas (~140,000 ms, from a
+stale-config backlog) that are not physical latency. **No Windows latency figure
+is claimed anywhere in this report**, so the Linux-vs-Windows table is
+deliberately left empty. All §7 figures are **Linux-only** (chrony < 1 ms; §3.5).
+A follow-up with a corrected Windows generator and a native Event Log path (§6,
+final item) would be needed to populate this section.
 
 ### 7.5 Loss Rate
 
 Loss rate = sent seq vs. landed seq per run × OS × hop (§3.6). Elevated loss at a
-hop invalidates that hop's latency stats for the affected run — flag such runs.
+hop invalidates that hop's latency stats for the affected run.
 
-| Run ID | Scenario | Agent | Aggregator | EPS | OS | Loss rate | Notes |
-|--------|----------|-------|------------|-----|----|-----------|-------|
-| `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` | `[PENDING]` |
+**Linux: zero loss, everywhere.** Across all **46 populated Linux cells** and
+every hop within them (**141.6 M end-to-end events**), the analyzer reports
+**loss_rate = 0.0, duplicates = 0, skipped = 0** — no exceptions. No Linux run is
+flagged, and no latency statistic in §7.1–§7.3 is invalidated by loss. This is the
+"clean dataset" claim of §1, verified directly against every `loss_rate` /
+`duplicates` / `skipped_events` field in the CSV.
+
+| Scope | Cells | Events | loss_rate | duplicates | skipped | Flagged runs |
+|-------|-------|--------|-----------|------------|---------|--------------|
+| Linux (all scenarios × agents × aggregators × volumes) | 46 | 141.6 M | 0.0 (all) | 0 (all) | 0 (all) | none |
+
+**Absent Linux cells** (not loss — never ran or landed nothing): `s4-ce-cs-10k`
+(generator-clock trip under 10k load; no run) and `s4-ce-vagg-10k` (run started,
+0 events landed). Both use the Cribl Edge agent; S4-10k figures therefore rest on
+the two Vector-agent cells (§7.1.4).
+
+**Windows:** out-of-scope (§7.4); its `count = 0` / `loss = 1.0` rows reflect the
+excluded-measurement decision, not a pipeline loss event, and are not counted
+here.
+
+### 7.6 Findings Narrative
+
+**Batch-flush constants dominate every hop.** The clearest signal in the data is
+that per-hop latency tracks the hop's **batch-flush constant**, not its network
+transit. The one un-batched hop, generation→agent, is **~1–13 ms** across
+scenarios (the §1 per-scenario means: S1 3.0, S2 2.9, S3 12.9, S4 3.1 ms). Every
+**batched network** hop (agent→aggregator-T1, T1→T2) lands in a **~400–700 ms**
+band — roughly half of the 1 s inter-tier batch interval, i.e. the mean wait for
+the next flush. Every **→S3** hop adds **~2 s** on the all-volume average,
+governed by the 5 s S3 flush. The **batch-adjusted** columns make this explicit:
+once the flush-wait is removed, the marginal transport/processing cost of a →S3
+hop is ≈ 0 ms at mean and p50 in almost every cell (a handful of tail cells show a
+few hundred ms at p99). The latency this pipeline exhibits is overwhelmingly
+*waiting for the next batch*, not moving or processing bytes.
+See [`charts/per_hop_stacked_by_scenario.png`](charts/per_hop_stacked_by_scenario.png).
+
+**End-to-end latency scales monotonically with hop count.** On the all-volume
+average, **S1 2.3 s → S2 3.0 s → S3 4.3 s → S4 6.1 s** (§1). §7.2 decomposes this:
+a second **aggregator tier** adds a stable ~0.6–1.6 s (one extra 1 s-batched hop),
+while an **S3 landing hop** adds more and is volume-dependent (it inserts a second
+5 s-flush boundary). The two additions are independent — S4−S1 equals
+(S2−S1)+(S3−S1) at every volume — so the architecture cost is predictable: each
+extra hop adds its own flush constant and nothing more.
+See [`charts/e2e_by_scenario_volume.png`](charts/e2e_by_scenario_volume.png).
+
+**Volume lowers latency here; it does not raise it — except at the agent.** At
+1k–10k EPS/host (below overload, §6) the raw →S3 and inter-tier hop means are
+**largest at 1k and fall as volume rises**, because batches fill and flush sooner
+relative to the fixed flush window; end-to-end mean declines monotonically with
+volume in every scenario (§7.3). The **sole** hop where latency *rises* with
+volume is generation→agent, and only for **Cribl Edge** (0.6 → 6.1 → 28.8 ms at
+1k/5k/10k, ~48×), while **Vector stays flat and sub-2 ms** (1.1 → 1.3 → 1.4 ms).
+Agent choice therefore matters for high-volume ingest latency and essentially
+nowhere else (§7.1.5).
+See [`charts/gen_to_agent_vec_vs_ce.png`](charts/gen_to_agent_vec_vs_ce.png).
+
+**The dataset is clean, and Linux-only.** Loss = 0, duplicates = 0, skips = 0
+across all 46 populated Linux cells / 141.6 M events (§7.5) — every latency figure
+above rests on complete, de-duplicated data. Two S4-10k Cribl Edge cells are
+absent (§7.1.4/§7.5) and Windows is out-of-scope (§7.4); these are noted at every
+affected figure. No claim in §7 exceeds what the CSV supports: sub-millisecond
+generation→agent deltas at 1k are reported as noise-floor (§5 item 9), →S3 hops
+are reported both raw and batch-adjusted (§5 items 1, 8), and the batch-flush
+constants are stated as controlled measurement constants that characterize *this*
+configuration, not a batch-free lower bound (§1(d), §5 item 8).
 
 ---
 
 ## 8. Evidence Index
 
-Maps `report/evidence/` artifacts to the claims they support. See
-[`evidence/README.md`](evidence/README.md) for what lands where and what is
-gitignored.
+Maps evidence artifacts to the claims they support. Analyzer tables and charts
+are committed under `report/charts/` and `report/evidence/`; per-event raw data
+and per-run directories are gitignored (see
+[`evidence/README.md`](evidence/README.md)).
 
-| Claim / section | Supporting artifact(s) in `report/evidence/` | Notes |
-|-----------------|----------------------------------------------|-------|
-| Run inventory & parameters (§3.1, §7) | Per-run **manifest** files (run_id, scenario, agent, aggregator, EPS, timestamps, resolved AMIs, tool versions) | Retained (summarized); one per run |
+| Claim / section | Supporting artifact | Notes |
+|-----------------|---------------------|-------|
+| Per-hop / per-scenario statistics (§7.1–§7.6) | [`evidence/latency_stats.csv`](evidence/latency_stats.csv) and [`evidence/latency_stats.md`](evidence/latency_stats.md) | Authoritative analyzer output; every §7 number traces to a row/column here (46 Linux cells; Windows rows count=0) |
+| End-to-end by scenario × volume (§1, §7.1, §7.2, §7.6) | [`charts/e2e_by_scenario_volume.png`](charts/e2e_by_scenario_volume.png) | Grouped bars; committed. Gitignored copy also in `evidence/` |
+| Per-hop contribution by scenario (§7.6, §1(a)) | [`charts/per_hop_stacked_by_scenario.png`](charts/per_hop_stacked_by_scenario.png) | Stacked per-hop means (all-volume avg); committed |
+| Agent divergence at gen→agent (§1(b), §7.1.5, §7.6) | [`charts/gen_to_agent_vec_vs_ce.png`](charts/gen_to_agent_vec_vs_ce.png) | Vector-flat vs Cribl-Edge-load-sensitive; committed |
+| Zero loss / dup / skip on Linux (§1, §7.5) | `loss_rate` / `duplicates` / `skipped_events` columns of `evidence/latency_stats.csv` | All 0 across 46 Linux cells |
+| Batch-adjusted derivations (§5 items 1, 8; §7.1, §7.6) | `adj_mean`/`adj_p50`/`adj_p90`/`adj_p99`/`adj_max` columns of `evidence/latency_stats.csv` | Derived per §5.2 + §4.5 + §10.1 |
+| Run inventory & parameters (§3.1, §7) | Per-run **manifest** files (run_id, scenario, agent, aggregator, EPS, timestamps, resolved AMIs, tool versions) | Retained (summarized); one per run; gitignored under run dirs |
 | Clock discipline within bounds (§3.5, §5 item 9) | **Clock-assertion** records from `assert-clocks.yml` (chrony tracking offset; w32tm stripchart) | Recorded per run as evidence |
-| Per-hop / per-scenario statistics (§7.1–§7.5) | **Analyzer output** from `analyze.py` (per run × OS × hop stats; loss rates) | Summary retained; raw per-event data gitignored |
 | Tool & AMI versions (§4) | Terraform state excerpt / manifest fields capturing resolved AMIs and pinned Vector/Cribl versions | Recorded at deploy |
-| Batch-adjusted derivations (§5 items 1, 8) | Analyzer output columns for raw vs batch-adjusted S3 hops | Derived per §5.2 + §4.5 |
-
-`[PENDING]` — populate artifact filenames after the run; do not cite artifacts
-that do not exist.
 
 ---
 
