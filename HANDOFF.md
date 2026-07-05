@@ -118,7 +118,7 @@ generator-host converge failures and proved the pipeline end-to-end:
   only (item 3). 8 fix commits `83c922c`..`b7b3ade` on `main`.
 - **SMOKE TEST — PIPELINE PROVEN (s1-vec-vagg, Linux):** ran the generator on
   llt-lin-vec-01 (eps 1000, 10 s warmup + 60 s), Vector agent → vagg Tier-1 NLB
-  :8080 → final S3. The `final/` prefix of `llt-final-624627265315` went from
+  :8080 → final S3. The `final/` prefix of `llt-final-<logging-acct>` went from
   0 → 28 objects (~3.2 MB each). A real measurement event carried
   `t_gen_ns: 1783132703549826294`, `hop_ts.agent: 1783132703552`,
   `hop_ts.agg1: 1783132704563` (deltas: gen→agent 2.17 ms, agent→agg1 1011 ms).

@@ -66,6 +66,9 @@ report/evidence/**/*.manifest.json
 latency_stats.csv
 latency_stats.md
 latency_summary.json
+# Chart PNGs rendered into evidence by the analyzer/report step; the committed
+# copies live under report/charts/, so ignore the evidence-dir duplicates.
+report/evidence/*.png
 # run_matrix.py resumability state (report/evidence/run_matrix_state.json by
 # default) — local orchestration progress, not source, and account/run-specific.
 run_matrix_state.json
