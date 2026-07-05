@@ -85,6 +85,25 @@ outputs:
     # explicitly above so no bucket-region lookup is needed. Do NOT widen the
     # IAM grant to satisfy the probe.
     verifyPermissions: false
+    # LIVE-VERIFIED (Cribl 4.18.2 + this experiment's buckets): the landing
+    # buckets have ObjectOwnership=BucketOwnerEnforced (S3 ACLs DISABLED). Cribl's
+    # S3 destination sends `x-amz-acl: private` by DEFAULT, and a BucketOwnerEnforced
+    # bucket rejects the canned `private` ACL with HTTP 400
+    # "AccessControlListNotSupported: The bucket does not allow ACLs" — so Cribl's
+    # multipart upload 400s and NOTHING lands. (Proven: generator-role PutObject
+    # with --acl private -> AccessControlListNotSupported; with
+    # --acl bucket-owner-full-control -> SUCCEEDS; with NO --acl -> SUCCEEDS. Vector's
+    # aws_s3 sink sends no ACL header, which is why the vec landing path worked
+    # unchanged.) Cribl has NO "omit the header" option — its objectACL enum is
+    # {private, public-read, public-read-write, authenticated-read, aws-exec-read,
+    # bucket-owner-read, bucket-owner-full-control} and `none` is REJECTED
+    # ("should be equal to one of the allowed values" -> config errored -> S3
+    # output blocked, events pile up as "orphaned EP ... flushRetryAttempts:1000").
+    # `bucket-owner-full-control` is the ONE enum value AWS special-cases as
+    # compatible with BucketOwnerEnforced (the owner already has full control), so
+    # it is a valid Cribl value that the bucket ACCEPTS. Do NOT re-enable ACLs on
+    # the bucket to satisfy Cribl.
+    objectACL: bucket-owner-full-control
     # Key prefix carries run_id + host_os, identical scheme to the Vector aws_s3
     # sink (PLAN §5.1 host_os dimension). M7: destPath is a JS TEMPLATE LITERAL
     # in Cribl (backtick-delimited with ${...} interpolation), not a plain
