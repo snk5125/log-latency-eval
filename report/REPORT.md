@@ -31,12 +31,45 @@ Authoritative specification: [`../PLAN.md`](../PLAN.md). Architecture detail:
 
 ## 1. Executive Summary
 
-`[PENDING RESULTS]` — Complete after analysis. This section will state, in
-plain terms: (a) how much average latency each additional hop adds, per scenario;
-(b) whether event volume (1k / 5k / 10k EPS) measurably changes those additions;
-(c) that results are **Linux-only** (Windows out-of-scope — see the Scope note
-above); and (d) the principal constraints that bound the conclusions. All quantitative claims here must trace to §7 Findings and the
-evidence in §8. Do not summarize beyond what the analyzer output supports.
+Based on **47 of 48 cells** (Linux; Windows out-of-scope per the Scope note), **141.6 M
+measurement events**, with **loss = 0, duplicates = 0, skips = 0** across every Linux
+run — a clean dataset. Mean per-hop latency (ms), averaged across agent/aggregator/volume:
+
+| Hop | S1 | S2 | S3 | S4 |
+|---|---|---|---|---|
+| Generation → agent (no batching) | 3.0 | 2.9 | 12.9 | 3.1 |
+| Agent → Aggregator-T1 (HTTP, 1 s batch) | 476 | 476 | — | — |
+| Aggregator-T1 → T2 (HTTP, 1 s batch) | — | 584 | — | 478 |
+| Agent → landing S3 (5 s flush) | — | — | 2024 | 2227 |
+| Landing S3 → Aggregator (SQS pickup) | — | — | 488 | 485 |
+| Last aggregator → final S3 (5 s flush) | 1843 | 1927 | 1768 | 2954 |
+| **End-to-end** | **2323** | **2989** | **4293** | **6148** |
+
+**(a) Latency added per hop is dominated by the hop's batch-flush constant, not raw
+network transit.** The un-batched generation→agent hop is **~1–13 ms** (near-network).
+Every *batched network* hop (agent→aggregator, aggregator→aggregator) adds **~475–585 ms**
+— roughly half of the 1 s inter-tier batch interval (mean wait for the next flush). Every
+*S3* hop (write + event-driven pickup) adds **~2 s**, dominated by the 5 s S3 flush.
+End-to-end scales monotonically with hop count: **S1 2.3 s → S2 3.0 s → S3 4.3 s → S4
+6.1 s**. Adding a second aggregator tier (S1→S2) costs ~+0.6 s; inserting an S3 landing
+hop (S1→S3) costs ~+2 s; doing both (S4) is the sum.
+
+**(b) Event volume barely affects the batched hops, but it affects agent ingest — and the
+two agents differ sharply there.** On the flush-dominated hops, 1k/5k/10k EPS are within
+noise (the batch interval, not throughput, sets the latency at these rates). At the
+generation→agent hop, **Vector is flat and low (1.1 / 1.3 / 1.4 ms at 1k/5k/10k)** while
+**Cribl Edge climbs with load (0.6 / 6.1 / 28.8 ms)** — so agent choice matters mainly for
+high-volume ingest latency.
+
+**(c) Results are Linux-only.** Windows was excluded (w32time clock coarseness + generator
+config staleness); no Windows latency figures are claimed (Scope note; §5).
+
+**(d) Principal constraints:** the batch-flush constants (1 s inter-tier, 5 s S3) are
+controlled measurement constants and dominate every batched hop — the numbers characterize
+*this* configuration, not a batch-free lower bound; S3-hop times use `LastModified`
+(second-precision; `adj_*` columns subtract the flush); one cell (`s4-ce-cs-10k`) is absent
+(intermittent generator-clock trip under 10k load). Full per-cell data: §7 and
+`report/evidence/latency_stats.{csv,md}`.
 
 ---
 
