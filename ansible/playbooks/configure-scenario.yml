@@ -53,7 +53,7 @@
 # guard on llt_stack matching the requested agent tech.
 # -----------------------------------------------------------------------------
 - name: Re-template event generator config for this run
-  hosts: role_generator
+  hosts: "{{ 'role_generator:!os_windows' if (llt_linux_only | default(false) | bool) else 'role_generator' }}"
   gather_facts: true
   # gather_subset excludes date_time: the Windows `setup` module intermittently
   # emits a stray \r in ansible_date_time over the SSM/PowerShell transport
@@ -87,7 +87,7 @@
 # Vector agent path (agent=vec).
 # -----------------------------------------------------------------------------
 - name: Re-template Vector agent config for this scenario
-  hosts: role_generator
+  hosts: "{{ 'role_generator:!os_windows' if (llt_linux_only | default(false) | bool) else 'role_generator' }}"
   gather_facts: true
   gather_subset: ["all", "!date_time"]   # win date_time \r JSON-framing guard (see gen-config play)
   # Mixed OS play — see become rationale above (C1/M9).
@@ -109,7 +109,7 @@
 
 # Cribl Edge path (agent=ce).
 - name: Re-template Cribl Edge config for this scenario
-  hosts: role_generator
+  hosts: "{{ 'role_generator:!os_windows' if (llt_linux_only | default(false) | bool) else 'role_generator' }}"
   gather_facts: true
   gather_subset: ["all", "!date_time"]   # win date_time \r JSON-framing guard (see gen-config play)
   # Mixed OS play — see become rationale above (C1/M9).

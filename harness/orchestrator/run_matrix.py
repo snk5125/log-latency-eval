@@ -333,6 +333,11 @@ def execute_cell(cell, aws, args, acct_logging):
         "eventgen_eps": cell.spec["eps"],
         "eventgen_warmup_seconds": d["warmup_secs"],
         "eventgen_duration_seconds": d["measurement_secs"],
+        # LINUX-ONLY descope (env LLT_LINUX_ONLY): when set, configure-scenario
+        # excludes the Windows generators from its role_generator plays so a
+        # flaky/overloaded Windows host cannot abort an otherwise-valid Linux
+        # cell. Windows was dropped from measurement (see REPORT scope note).
+        "llt_linux_only": bool(os.environ.get("LLT_LINUX_ONLY")),
     }
 
     # --- Phase 1: render scenario config -----------------------------------------
@@ -420,6 +425,15 @@ def _start_generators(cell, aws, run_id, dry_run):
     """
     started = {}
     for os_name, host_id in cell.spec["host_pair"].items():
+        # LINUX-ONLY descope (LLT_LINUX_ONLY): do NOT start Windows generators.
+        # Windows was excluded from measurement (w32time can't hold the clock
+        # bound + generator-config staleness -> ~0 Windows data; REPORT scope
+        # note). Starting them only floods win-vec/win-ce with stale config,
+        # whose load garbles SSM fact-gathering and aborts valid Linux cells.
+        # _stop_and_collect iterates the returned `started` dict, so omitting an
+        # OS here cleanly omits it from stop/collect too.
+        if os_name != "linux" and os.environ.get("LLT_LINUX_ONLY"):
+            continue
         # AWS-managed run-command docs; the start command is OS-specific.
         if os_name == "linux":
             document = "AWS-RunShellScript"
