@@ -87,12 +87,18 @@ source, not only end-to-end (`PLAN.md` §1).
 
 ### 2.1 Scenarios (test cases)
 
-| ID | Path |
-|----|------|
-| S1 | Host → Aggregator → S3 (final) |
-| S2 | Host → Aggregator-T1 → Aggregator-T2 → S3 (final) |
-| S3 | Host → S3 (landing) → Aggregator → S3 (final) |
-| S4 | Host → S3 (landing) → Aggregator-T1 → Aggregator-T2 → S3 (final) |
+| ID | Path | Total avg latency, host → final S3 |
+|----|------|:---:|
+| S1 | Host → Aggregator → S3 (final) | **2,323 ms** (~2.3 s) |
+| S2 | Host → Aggregator-T1 → Aggregator-T2 → S3 (final) | **2,989 ms** (~3.0 s) |
+| S3 | Host → S3 (landing) → Aggregator → S3 (final) | **4,293 ms** (~4.3 s) |
+| S4 | Host → S3 (landing) → Aggregator-T1 → Aggregator-T2 → S3 (final) | **6,148 ms** (~6.1 s) |
+
+*Total avg latency = the measured **end-to-end** mean (event generation `t_gen_ns` →
+final-bucket PutObject), Linux, averaged across both agents × both aggregators × 3
+volumes; **raw** (batch-flush wait not subtracted). Source: §1 / §7.1 and
+`report/evidence/latency_stats.csv`. Dominated by the controlled 5 s S3 flush(es) —
+see §7 for the per-hop, per-volume, and batch-adjusted breakdown.*
 
 **Diagrams:** evidence-grade network topology, one sequence diagram per
 scenario with timestamp capture points labeled, and the per-hop measurement
