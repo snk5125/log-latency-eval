@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S3 tiering cost calculator</title>
+</head>
+<body>
+<style>
+  :root{
+    --paper:#F5F6F8; --surface:#FFFFFF; --ink:#161A22; --body:#2E3542;
+    --slate:#525A6B; --muted:#868E9E; --line:#E3E6EC; --line-soft:#EDEFF3;
+    --accent:#45508A; --accent-soft:#EEF0F7;
+    --hot:#C07C1E; --cool:#148768; --cold:#1D6DB4; --exp:#A83636;
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--paper);color:var(--body);font-family:var(--font-sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased;margin:0;padding:2.2rem 1.25rem 3rem}
+  .wrap{max-width:1120px;margin:0 auto}
+  .eyebrow{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 .5rem}
+  h1{font-size:1.75rem;line-height:1.15;font-weight:600;color:var(--ink);margin:0 0 .55rem;letter-spacing:-.015em;text-wrap:balance}
+  .dek{font-size:1rem;color:var(--slate);margin:0;max-width:720px;text-wrap:pretty}
+  .cols{display:grid;grid-template-columns:398px minmax(0,1fr);gap:1.1rem;margin-top:1.8rem;align-items:start}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:1rem 1.1rem}
+  .card+.card{margin-top:1.1rem}
+  .chead{display:flex;justify-content:space-between;align-items:baseline;gap:.6rem;margin-bottom:.7rem}
+  .cname{font-family:var(--font-mono);font-size:.9rem;color:var(--ink)}
+  .csub{font-size:.74rem;color:var(--muted)}
+  label.f{display:block}
+  .fl{display:block;font-family:var(--font-mono);font-size:.62rem;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted);margin:0 0 .22rem}
+  input[type=number],select{font-family:var(--font-mono);font-size:.85rem;color:var(--ink);
+    background:var(--surface);border:1px solid var(--line);border-radius:7px;
+    padding:.32rem .45rem;width:100%}
+  input[type=number]:focus-visible,select:focus-visible,button:focus-visible,input[type=range]:focus-visible{
+    outline:2px solid var(--accent);outline-offset:1px}
+  input[type=range]{width:100%;accent-color:var(--accent);margin:.25rem 0 0}
+  .inrow{display:grid;grid-template-columns:minmax(0,1fr) 6.2rem;gap:.8rem;align-items:end}
+  .inrow+.inrow{margin-top:.85rem}
+  .big{font-family:var(--font-mono);font-size:1.05rem}
+  .tier{border:1px solid var(--line-soft);border-radius:10px;padding:.65rem .75rem;margin-top:.65rem}
+  .thead{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;margin-bottom:.5rem;flex-wrap:wrap}
+  .tname{font-family:var(--font-mono);font-size:.82rem;color:var(--ink)}
+  .tcalc{font-family:var(--font-mono);font-size:.72rem;color:var(--muted);font-variant-numeric:tabular-nums}
+  .trow1{display:grid;grid-template-columns:5rem minmax(0,1fr);gap:.55rem}
+  .trow{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:.55rem;margin-top:.5rem}
+  .trow select,.trow1 input{min-width:0}
+  .lbar{display:flex;height:18px;border-radius:5px;overflow:hidden;background:var(--line-soft);margin-top:.6rem}
+  .lbar span{display:flex;align-items:center;justify-content:center;height:100%;
+    font-family:var(--font-mono);font-size:.6rem;white-space:nowrap;overflow:hidden}
+  .lb-hot{background:#E6B968;color:#5c3a08}
+  .lb-cool{background:#5FB89B;color:#07402f}
+  .lb-cold{background:#6FA6DA;color:#0e3a63}
+  .lb-exp{background:var(--exp);flex:0 0 4px}
+  .lcap{font-family:var(--font-mono);font-size:.66rem;color:var(--muted);margin-top:.32rem;line-height:1.5}
+  .hint{font-size:.74rem;color:var(--muted);margin:.8rem 0 0;line-height:1.5}
+  .presets{display:flex;gap:.5rem;margin-bottom:.85rem;flex-wrap:wrap}
+  .presets button{font-family:var(--font-mono);font-size:.74rem;color:var(--slate);cursor:pointer;
+    background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.34rem .7rem}
+  .presets button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+  .pgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.55rem .8rem}
+  .psec{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--muted);grid-column:1/-1;margin-top:.35rem;padding-top:.5rem;border-top:1px solid var(--line-soft)}
+  .psec:first-child{margin-top:0;padding-top:0;border-top:0}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.8rem}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:.8rem .95rem}
+  .kl{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+  .kv{font-family:var(--font-mono);font-size:1.45rem;color:var(--ink);margin-top:.2rem;
+    font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .kv small{font-size:.8rem;color:var(--muted);font-weight:400}
+  .ks{font-size:.72rem;color:var(--slate);margin-top:.1rem;font-variant-numeric:tabular-nums}
+  .kv.save{color:var(--cool)} .kv.burn{color:var(--exp)}
+  .legend{display:flex;flex-wrap:wrap;gap:1rem;font-size:.76rem;color:var(--slate);margin:0 0 .5rem}
+  .legend .sw{display:inline-block;width:17px;height:3px;border-radius:2px;vertical-align:middle;margin-right:.4rem}
+  .legend .swd{display:inline-block;width:17px;height:0;border-top:2px dashed var(--exp);vertical-align:middle;margin-right:.4rem}
+  .legend .swb{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:.4rem}
+  .chartwrap{width:100%}
+  canvas{display:block;width:100%}
+  .pt{width:100%;border-collapse:collapse;font-size:.84rem}
+  .pt th{font-family:var(--font-mono);font-size:.64rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;text-align:right;padding:.1rem 0 .35rem}
+  .pt th:first-child{text-align:left}
+  .pt td{padding:.3rem 0 .3rem .7rem;border-top:1px solid var(--line-soft);text-align:right;
+    font-family:var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pt td:first-child{text-align:left;padding-left:0}
+  .pt tr.ttl td{border-top:1px solid var(--line);font-weight:600;padding-top:.42rem}
+  .warn{margin-top:.9rem;padding:.55rem .85rem;background:#FBF4E7;border-left:3px solid var(--hot);
+    font-size:.8rem;color:#6b4a10;display:none}
+  .warn ul{margin:.2rem 0 0;padding-left:1.1rem}
+  .assump{margin-top:1rem;font-size:.76rem;color:var(--muted);line-height:1.55}
+  footer{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.8rem;color:var(--muted)}
+  footer a{color:var(--accent)}
+  @media(max-width:940px){.cols{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Interactive &middot; cloud data architecture</p>
+  <h1>S3 tiering cost calculator</h1>
+  <p class="dek">Estimate the steady-state (&ldquo;peak&rdquo;) cost of the tiered log architecture: set daily ingest, how long each tier holds data in each storage class, and the prices. Defaults are <b>AWS GovCloud (US-West) list prices</b>. Everything recomputes as you type.</p>
+
+  <div class="cols">
+    <div>
+      <div class="card">
+        <div class="chead"><span class="cname">ingest</span><span class="csub">what arrives every day</span></div>
+        <div class="inrow">
+          <label class="f"><span class="fl">total ingest &middot; TB / day</span>
+            <input type="range" id="rTotal" min="0.5" max="30" step="0.5" value="7" aria-label="Total ingest in terabytes per day">
+          </label>
+          <label class="f"><span class="fl">&nbsp;</span>
+            <input type="number" id="inTotal" class="big" min="0.1" step="0.5" value="7" aria-label="Total ingest, exact value">
+          </label>
+        </div>
+        <div class="inrow">
+          <label class="f"><span class="fl">avg object size &middot; MB</span>
+            <input type="range" id="rObj" min="1" max="128" step="1" value="10" aria-label="Average object size in megabytes">
+          </label>
+          <label class="f"><span class="fl">&nbsp;</span>
+            <input type="number" id="inObj" class="big" min="0.1" step="1" value="10" aria-label="Average object size, exact value">
+          </label>
+        </div>
+        <p class="hint">Object size sets the request volume: one PUT per object at write, one transition per lifecycle hop &mdash; both priced under <em>requests</em>. Smaller objects &rarr; more request fees for the same bytes. Reads/GETs are not modeled; enter bytes as stored (post-compression).</p>
+      </div>
+
+      <div class="card">
+        <div class="chead"><span class="cname">tiers &amp; lifecycle</span><span class="csub">days in each storage class</span></div>
+        <div id="tiers"></div>
+      </div>
+
+      <div class="card">
+        <div class="chead"><span class="cname">pricing</span><span class="csub">editable &middot; $/GB-mo and $/1k requests</span></div>
+        <div class="presets" role="group" aria-label="Pricing presets">
+          <button type="button" id="btnGov" class="on">GovCloud us-gov-west-1</button>
+          <button type="button" id="btnCom">Commercial us-east-2</button>
+        </div>
+        <div class="pgrid">
+          <div class="psec">Standard &middot; $/GB-month &middot; by volume tranche</div>
+          <label class="f"><span class="fl">first 50 TB</span><input type="number" id="pSTD1" step="0.0001" min="0"></label>
+          <label class="f"><span class="fl">next 450 TB</span><input type="number" id="pSTD2" step="0.0001" min="0"></label>
+          <label class="f"><span class="fl">over 500 TB</span><input type="number" id="pSTD3" step="0.0001" min="0"></label>
+          <div class="psec">other classes &middot; $/GB-month</div>
+          <label class="f"><span class="fl">Standard-IA</span><input type="number" id="pIA" step="0.0001" min="0"></label>
+          <label class="f"><span class="fl">Glacier Instant</span><input type="number" id="pGIR" step="0.0001" min="0"></label>
+          <label class="f"><span class="fl">Glacier Flexible</span><input type="number" id="pGLA" step="0.0001" min="0"></label>
+          <label class="f"><span class="fl">Deep Archive</span><input type="number" id="pDEEP" step="0.0001" min="0"></label>
+          <div class="psec">requests &middot; $/1,000</div>
+          <label class="f"><span class="fl">PUT (write)</span><input type="number" id="pPUT" step="0.001" min="0"></label>
+          <label class="f"><span class="fl">transition &rarr; IA</span><input type="number" id="pTIA" step="0.001" min="0"></label>
+          <label class="f"><span class="fl">transition &rarr; Gl. Instant</span><input type="number" id="pTGIR" step="0.001" min="0"></label>
+          <label class="f"><span class="fl">transition &rarr; Gl. Flexible</span><input type="number" id="pTGLA" step="0.001" min="0"></label>
+          <label class="f"><span class="fl">transition &rarr; Deep Archive</span><input type="number" id="pTDEEP" step="0.001" min="0"></label>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="kpis">
+        <div class="kpi"><div class="kl">data stored at peak</div><div class="kv" id="kTB">&mdash;</div><div class="ks" id="kTBs"></div></div>
+        <div class="kpi"><div class="kl">cost at peak &middot; tiered</div><div class="kv save" id="kT">&mdash;</div><div class="ks" id="kTs"></div></div>
+        <div class="kpi"><div class="kl">if no lifecycle</div><div class="kv burn" id="kS">&mdash;</div><div class="ks">all bytes in Standard</div></div>
+        <div class="kpi"><div class="kl">saved at peak</div><div class="kv" id="kP">&mdash;</div><div class="ks" id="kPs"></div></div>
+      </div>
+
+      <div class="card" style="margin-top:1.1rem">
+        <div class="legend">
+          <span><span class="sw" style="background:var(--cool)"></span>tiered lifecycle</span>
+          <span><span class="swd"></span>no lifecycle (all Standard)</span>
+          <span><span class="swb" style="background:rgba(20,135,104,.15)"></span>savings</span>
+        </div>
+        <div class="chartwrap"><canvas id="chart" height="330" role="img" aria-label="Estimated monthly cost versus total data stored">Chart: monthly cost versus data stored.</canvas></div>
+      </div>
+
+      <div class="card" style="margin-top:1.1rem">
+        <div class="chead"><span class="cname">where the peak lives</span><span class="csub">per tier &middot; at steady state</span></div>
+        <table class="pt">
+          <thead><tr><th>tier</th><th>ingest</th><th>kept</th><th>stored</th><th>cost / mo</th><th>$ / TB-mo</th></tr></thead>
+          <tbody id="ptBody"></tbody>
+        </table>
+      </div>
+
+      <div class="warn" id="warn"><b>Heads-up</b><ul id="warnList"></ul></div>
+
+      <p class="assump">Peak = steady state: standing data stops growing once the longest retention has elapsed and daily expiry equals daily ingest. Cost = storage (per class, decimal GB) + PUT + lifecycle-transition requests. Excludes retrievals/restores, GET traffic, KMS, replication, and egress. Standard is tranche-priced on the aggregate Standard footprint across all tiers (first 50&nbsp;TB / next 450&nbsp;TB / over 500&nbsp;TB &mdash; boundaries fixed, rates editable), and the no-lifecycle baseline uses the same schedule; per-tier rows allocate Standard at the blended rate. Tranches reset monthly per account and region, so any other Standard usage in the account would shift the blend slightly. All bytes are as stored &mdash; apply your compression ratio before entering ingest. Minimum-duration charges (IA&nbsp;30d, Glacier&nbsp;Instant/Flexible&nbsp;90d, Deep&nbsp;Archive&nbsp;180d) are flagged but not added to the bill.</p>
+
+      <footer>Companion to the <a href="https://claude.ai/code/artifact/3bcd2ed5-618c-43d7-a67f-907457933cd2">S3 log tiering strategy</a> reference &mdash; same model, same tier defaults. GovCloud prices from the AWS Price List API for us-gov-west-1 (Deep Archive inferred from the Intelligent-Tiering deep-archive-access rate; verify before budgeting).</footer>
+    </div>
+  </div>
+</div>
+
+<script>
+/*MODEL-START*/
+var MO_DAYS = 30.4368;
+var CLASS_MIN = { IA:30, GIR:90, GLA:90, DEEP:180 };
+var CLASS_NAME = { STD:'Standard', IA:'Standard-IA', GIR:'Glacier Instant', GLA:'Glacier Flexible', DEEP:'Deep Archive' };
+var TRANS_KEY = { IA:'TIA', GIR:'TGIR', GLA:'TGLA', DEEP:'TDEEP' };
+
+function computeModel(cfg){
+  var objPerTB = 1e6 / cfg.objMB;
+  var sumParts = 0;
+  cfg.tiers.forEach(function(t){ sumParts += t.parts; });
+  var tiers = cfg.tiers.map(function(t){
+    var tb = sumParts > 0 ? cfg.totalTB * t.parts / sumParts : 0;
+    var stages = [], cum = 0;
+    t.stages.forEach(function(s){
+      if (s.cls !== 'NONE' && s.days > 0 && cum < 7320){
+        var d = Math.min(s.days, 7320 - cum);
+        stages.push({ cls:s.cls, a0:cum, a1:cum + d, days:d });
+        cum += d;
+      }
+    });
+    return { name:t.name, tb:tb, stages:stages, ret:cum };
+  });
+  var maxRet = 0;
+  tiers.forEach(function(t){ if (t.ret > maxRet) maxRet = t.ret; });
+  if (maxRet === 0) maxRet = 1;
+
+  function reqMonthly(t){
+    var objMo = t.tb * objPerTB * MO_DAYS;
+    var c = objMo * cfg.p.PUT / 1000;
+    t.stages.forEach(function(s, i){
+      if (i > 0 && TRANS_KEY[s.cls]) c += objMo * cfg.p[TRANS_KEY[s.cls]] / 1000;
+    });
+    return c;
+  }
+  function storageAt(t, D){
+    var other = 0, stdGB = 0, gb = 0;
+    t.stages.forEach(function(s){
+      var amt = t.tb * 1000 * Math.max(0, Math.min(D, s.a1) - s.a0);
+      gb += amt;
+      if (s.cls === 'STD') stdGB += amt; else other += amt * cfg.p[s.cls];
+    });
+    return { other:other, stdGB:stdGB, gb:gb };
+  }
+  function stdCost(gb){
+    var t1 = Math.min(gb, 51200);
+    var t2 = Math.min(Math.max(gb - 51200, 0), 460800);
+    var t3 = Math.max(gb - 512000, 0);
+    return t1*cfg.p.STD1 + t2*cfg.p.STD2 + t3*cfg.p.STD3;
+  }
+
+  var reqTot = 0;
+  tiers.forEach(function(t){ reqTot += reqMonthly(t); });
+
+  var bset = { 0:1 }; bset[maxRet] = 1;
+  tiers.forEach(function(t){ t.stages.forEach(function(s){ bset[s.a0]=1; bset[s.a1]=1; }); });
+  var days = Object.keys(bset).map(Number).filter(function(d){ return d <= maxRet; }).sort(function(a,b){ return a-b; });
+
+  function totalsAt(D){
+    var gb = 0, other = 0, sgb = 0;
+    tiers.forEach(function(t){
+      var r = storageAt(t, Math.min(D, t.ret));
+      gb += r.gb; other += r.other; sgb += r.stdGB;
+    });
+    return { gb:gb, other:other, sgb:sgb };
+  }
+
+  var extra = [];
+  [51200, 512000].forEach(function(T){
+    ['gb','sgb'].forEach(function(key){
+      for (var j = 0; j < days.length - 1; j++){
+        var v0 = totalsAt(days[j])[key], v1 = totalsAt(days[j+1])[key];
+        if (v0 < T && T < v1) extra.push(days[j] + (T - v0)/(v1 - v0)*(days[j+1] - days[j]));
+      }
+    });
+  });
+  days = days.concat(extra).sort(function(a,b){ return a-b; });
+
+  var pts = days.map(function(D){
+    var s = totalsAt(D);
+    return { tb: s.gb/1000, yT: s.other + stdCost(s.sgb) + reqTot, yS: stdCost(s.gb) };
+  });
+
+  var be = null;
+  for (var i = 0; i < pts.length - 1; i++){
+    var d0 = pts[i].yT - pts[i].yS, d1 = pts[i+1].yT - pts[i+1].yS;
+    if (d0 > 0 && d1 <= 0){
+      var f = d0 / (d0 - d1);
+      be = { tb: pts[i].tb + f*(pts[i+1].tb - pts[i].tb), y: pts[i].yT + f*(pts[i+1].yT - pts[i].yT) };
+      break;
+    }
+  }
+
+  var peakTot = totalsAt(maxRet);
+  var blendedStd = peakTot.sgb > 0 ? stdCost(peakTot.sgb)/peakTot.sgb : 0;
+  var perTier = tiers.map(function(t){
+    var r = storageAt(t, t.ret), rq = reqMonthly(t);
+    return { name:t.name, tb:t.tb, ret:t.ret, storedTB:r.gb/1000,
+      cost:r.other + blendedStd*r.stdGB + rq, stages:t.stages };
+  });
+  var last = pts[pts.length-1];
+  var warns = [];
+  tiers.forEach(function(t){
+    t.stages.forEach(function(s, i){
+      if (i > 0 && CLASS_MIN[s.cls] && s.days < CLASS_MIN[s.cls])
+        warns.push(t.name + ': ' + CLASS_NAME[s.cls] + ' held ' + s.days + ' d — below its ' + CLASS_MIN[s.cls] + '-day minimum; AWS bills the remainder anyway.');
+    });
+  });
+  if (sumParts === 0) warns.push('All tier shares are zero — nothing is being ingested.');
+
+  return { pts:pts, be:be, perTier:perTier, reqTot:reqTot,
+    peakTB:last.tb, peakT:last.yT, peakS:last.yS, maxRet:maxRet, warns:warns };
+}
+/*MODEL-END*/
+
+var PRESETS = {
+  gov: { STD1:0.039, STD2:0.037, STD3:0.0355, IA:0.02,   GIR:0.0064, GLA:0.0054, DEEP:0.0024,  PUT:0.005, TIA:0.01, TGIR:0.02, TGLA:0.039, TDEEP:0.065 },
+  com: { STD1:0.023, STD2:0.022, STD3:0.021,  IA:0.0125, GIR:0.004,  GLA:0.0036, DEEP:0.00099, PUT:0.005, TIA:0.01, TGIR:0.02, TGLA:0.03,  TDEEP:0.05  }
+};
+var PRICE_IDS = { STD1:'pSTD1', STD2:'pSTD2', STD3:'pSTD3', IA:'pIA', GIR:'pGIR', GLA:'pGLA', DEEP:'pDEEP', PUT:'pPUT', TIA:'pTIA', TGIR:'pTGIR', TGLA:'pTGLA', TDEEP:'pTDEEP' };
+var TIER_DEFS = [
+  { id:'t0', name:'tier-0 · critical', parts:1, std:90, coolCls:'GIR',  cool:275, coldCls:'DEEP', cold:548 },
+  { id:'t1', name:'tier-1',            parts:2, std:30, coolCls:'IA',   cool:60,  coldCls:'GLA',  cold:275 },
+  { id:'t2', name:'tier-2',            parts:2, std:30, coolCls:'IA',   cool:60,  coldCls:'NONE', cold:0   },
+  { id:'t3', name:'tier-3',            parts:2, std:14, coolCls:'NONE', cool:0,   coldCls:'NONE', cold:0   }
+];
+
+function $(id){ return document.getElementById(id); }
+function ce(tag, cls, text){
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function numInput(id, val, step, aria){
+  var i = document.createElement('input');
+  i.type = 'number'; i.id = id; i.min = '0'; i.step = String(step); i.value = String(val);
+  if (aria) i.setAttribute('aria-label', aria);
+  return i;
+}
+function classSel(id, opts, selv, aria){
+  var s = document.createElement('select');
+  s.id = id; s.setAttribute('aria-label', aria);
+  opts.forEach(function(c){
+    var o = document.createElement('option');
+    o.value = c; o.textContent = c === 'NONE' ? '—' : CLASS_NAME[c];
+    if (c === selv) o.selected = true;
+    s.appendChild(o);
+  });
+  return s;
+}
+function fld(lab, ctrl){
+  var l = ce('label', 'f');
+  l.appendChild(ce('span', 'fl', lab));
+  l.appendChild(ctrl);
+  return l;
+}
+TIER_DEFS.forEach(function(t){
+  var tier = ce('div', 'tier');
+  var head = ce('div', 'thead');
+  head.appendChild(ce('span', 'tname', t.name));
+  var calc = ce('span', 'tcalc'); calc.id = t.id + 'calc';
+  head.appendChild(calc);
+  tier.appendChild(head);
+  var r1 = ce('div', 'trow1');
+  r1.appendChild(fld('share', numInput(t.id+'parts', t.parts, 0.5, t.name+' share of ingest')));
+  r1.appendChild(fld('Standard · days', numInput(t.id+'std', t.std, 1, t.name+' days in Standard')));
+  tier.appendChild(r1);
+  var r2 = ce('div', 'trow');
+  r2.appendChild(fld('then · class', classSel(t.id+'coolcls', ['NONE','IA','GIR'], t.coolCls, t.name+' cool storage class')));
+  r2.appendChild(fld('days', numInput(t.id+'cool', t.cool, 1, t.name+' days in cool class')));
+  tier.appendChild(r2);
+  var r3 = ce('div', 'trow');
+  r3.appendChild(fld('then · class', classSel(t.id+'coldcls', ['NONE','GLA','DEEP'], t.coldCls, t.name+' cold storage class')));
+  r3.appendChild(fld('days', numInput(t.id+'cold', t.cold, 1, t.name+' days in cold class')));
+  tier.appendChild(r3);
+  var bar = ce('div', 'lbar'); bar.id = t.id + 'bar';
+  bar.setAttribute('role', 'img');
+  var cap = ce('div', 'lcap'); cap.id = t.id + 'cap';
+  tier.appendChild(bar);
+  tier.appendChild(cap);
+  $('tiers').appendChild(tier);
+});
+
+function setPreset(key){
+  var p = PRESETS[key];
+  Object.keys(PRICE_IDS).forEach(function(k){ $(PRICE_IDS[k]).value = p[k]; });
+  $('btnGov').classList.toggle('on', key === 'gov');
+  $('btnCom').classList.toggle('on', key === 'com');
+  recalc();
+}
+$('btnGov').addEventListener('click', function(){ setPreset('gov'); });
+$('btnCom').addEventListener('click', function(){ setPreset('com'); });
+
+function num(id){ var v = parseFloat($(id).value); return isFinite(v) && v >= 0 ? v : 0; }
+function money(v){ return '$' + Math.round(v).toLocaleString('en-US'); }
+function kfmt(v){ return v >= 9950 ? '$' + (v/1000).toFixed(v >= 99500 ? 0 : 1) + 'k' : money(v); }
+function retFmt(d){ return d >= 60 ? Math.round(d/30.44) + ' mo' : Math.round(d) + ' d'; }
+function setKV(id, main, unit){
+  var n = $(id); n.textContent = main + (unit ? ' ' : '');
+  if (unit) n.appendChild(ce('small', null, unit));
+}
+
+var STATE = null;
+
+function readCfg(){
+  var p = {};
+  Object.keys(PRICE_IDS).forEach(function(k){ p[k] = num(PRICE_IDS[k]); });
+  return {
+    totalTB: num('inTotal'), objMB: Math.max(0.1, num('inObj')), p: p,
+    tiers: TIER_DEFS.map(function(t){
+      return { name: t.name.replace(' · critical',''), parts: num(t.id+'parts'), stages: [
+        { cls:'STD', days:num(t.id+'std') },
+        { cls:$(t.id+'coolcls').value, days:num(t.id+'cool') },
+        { cls:$(t.id+'coldcls').value, days:num(t.id+'cold') }
+      ]};
+    })
+  };
+}
+
+function recalc(){
+  var cfg = readCfg();
+  var m = computeModel(cfg);
+  STATE = m;
+
+  var GRP = { STD:'hot', IA:'cool', GIR:'cool', GLA:'cold', DEEP:'cold' };
+  TIER_DEFS.forEach(function(t, i){
+    var pt = m.perTier[i];
+    $(t.id+'calc').textContent = pt.tb.toFixed(1) + ' TB/day · kept ' + retFmt(pt.ret);
+    var bar = $(t.id+'bar'), cap = $(t.id+'cap');
+    bar.textContent = '';
+    if (pt.stages.length && pt.ret > 0){
+      var parts = [];
+      pt.stages.forEach(function(s){
+        var wide = s.days >= pt.ret * 0.14;
+        var seg = ce('span', 'lb-'+GRP[s.cls], wide ? Math.round(s.days) + ' d' : '');
+        seg.style.width = (100 * s.days / pt.ret) + '%';
+        seg.title = CLASS_NAME[s.cls] + ' · day ' + Math.round(s.a0) + '–' + Math.round(s.a1) + ' (' + Math.round(s.days) + ' d)';
+        bar.appendChild(seg);
+        parts.push(Math.round(s.a0) + '–' + Math.round(s.a1) + ' d ' + CLASS_NAME[s.cls]);
+      });
+      bar.appendChild(ce('span', 'lb-exp', ''));
+      var capText = parts.join(' → ') + ' → deleted day ' + Math.round(pt.ret)
+        + (pt.ret >= 60 ? ' (' + retFmt(pt.ret) + ')' : '');
+      cap.textContent = capText;
+      bar.setAttribute('aria-label', pt.name + ' lifecycle: ' + capText);
+    } else {
+      cap.textContent = 'no lifecycle stages — nothing stored';
+      bar.setAttribute('aria-label', pt.name + ': no lifecycle stages');
+    }
+  });
+
+  if (m.peakTB >= 1000) setKV('kTB', (m.peakTB/1000).toFixed(2), 'PB');
+  else setKV('kTB', Math.round(m.peakTB).toLocaleString('en-US'), 'TB');
+  $('kTBs').textContent = '≈' + Math.round(m.peakTB).toLocaleString('en-US') + ' TB · reached after ' + retFmt(m.maxRet);
+  setKV('kT', kfmt(m.peakT), '/mo');
+  $('kTs').textContent = '≈' + money(m.peakT*12) + ' / yr · incl. ' + money(m.reqTot) + '/mo write+transition fees';
+  setKV('kS', kfmt(m.peakS), '/mo');
+  var pct = m.peakS > 0 ? 100*(1 - m.peakT/m.peakS) : 0;
+  $('kP').textContent = Math.round(pct) + '%';
+  $('kP').className = 'kv ' + (pct >= 0 ? 'save' : 'burn');
+  $('kPs').textContent = (pct >= 0 ? '−' : '+') + kfmt(Math.abs(m.peakS - m.peakT)) + ' /mo vs Standard-only';
+
+  var tb = $('ptBody'); tb.textContent = '';
+  function row(cells, ttl){
+    var tr = document.createElement('tr');
+    if (ttl) tr.className = 'ttl';
+    cells.forEach(function(c){ tr.appendChild(ce('td', null, c)); });
+    tb.appendChild(tr);
+  }
+  m.perTier.forEach(function(pt){
+    row([pt.name, pt.tb.toFixed(1)+' TB/d', retFmt(pt.ret),
+      Math.round(pt.storedTB).toLocaleString('en-US')+' TB', money(pt.cost),
+      pt.storedTB > 0 ? '$'+(pt.cost/pt.storedTB).toFixed(1) : '—']);
+  });
+  row(['total', cfg.totalTB.toFixed(1)+' TB/d', '—',
+    Math.round(m.peakTB).toLocaleString('en-US')+' TB', money(m.peakT),
+    m.peakTB > 0 ? '$'+(m.peakT/m.peakTB).toFixed(1) : '—'], true);
+
+  var w = $('warn'), wl = $('warnList');
+  wl.textContent = '';
+  if (m.warns.length){
+    w.style.display = 'block';
+    m.warns.forEach(function(x){ wl.appendChild(ce('li', null, x)); });
+  } else w.style.display = 'none';
+
+  $('chart').setAttribute('aria-label',
+    'Monthly cost versus data stored: tiered reaches ' + money(m.peakT) + ' per month at '
+    + Math.round(m.peakTB).toLocaleString('en-US') + ' TB; Standard-only reaches ' + money(m.peakS)
+    + (m.be ? '; break-even near ' + Math.round(m.be.tb) + ' TB.' : '.'));
+
+  draw();
+}
+
+function niceStep(max, n){
+  var raw = max / n, mag = Math.pow(10, Math.floor(Math.log(raw)/Math.LN10)), norm = raw/mag;
+  return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+}
+
+function draw(){
+  var m = STATE; if (!m) return;
+  var cv = $('chart'), W = cv.parentElement.clientWidth, H = 330, dpr = window.devicePixelRatio || 1;
+  if (W < 40) return;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+'px';
+  var g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  var L = 60, R = W-14, T = 14, B = H-44;
+  var xmax = Math.max(m.peakTB, 1) * 1.04;
+  var ymax = Math.max(m.peakT, m.peakS, 1) * 1.1;
+  function X(v){ return L + (v/xmax)*(R-L); }
+  function Y(v){ return B - (v/ymax)*(B-T); }
+  var mono = '11px ui-monospace, Menlo, Consolas, monospace';
+  var sans = '12px -apple-system, "Segoe UI", sans-serif';
+
+  g.strokeStyle = '#EDEFF3'; g.lineWidth = 1; g.font = mono; g.fillStyle = '#868E9E';
+  var ys = niceStep(ymax, 4);
+  for (var v = ys; v <= ymax; v += ys){
+    g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(R, Y(v)); g.stroke();
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText(v >= 1000 ? '$'+Math.round(v/100)/10+'k' : '$'+Math.round(v), L-7, Y(v));
+  }
+  g.strokeStyle = '#E3E6EC';
+  g.beginPath(); g.moveTo(L, B); g.lineTo(R, B); g.stroke();
+  var xs = niceStep(xmax, 5);
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  for (var t = xs; t <= xmax; t += xs){
+    if (Math.abs(X(t) - X(m.peakTB)) < 34) continue;
+    g.fillText(Math.round(t).toLocaleString('en-US'), X(t), B+7);
+  }
+  g.fillText('0', L, B+7);
+  g.fillText(Math.round(m.peakTB).toLocaleString('en-US'), X(m.peakTB), B+7);
+  g.font = sans; g.fillStyle = '#868E9E';
+  g.fillText('total data stored (TB) — filling toward steady state', (L+R)/2, B+24);
+
+  var pts = m.pts;
+  if (m.be){
+    var band = [{ tb:m.be.tb, yT:m.be.y, yS:m.be.y }].concat(pts.filter(function(p){ return p.tb > m.be.tb; }));
+    if (band.length > 1){
+      g.beginPath();
+      band.forEach(function(p, i){ i ? g.lineTo(X(p.tb), Y(p.yS)) : g.moveTo(X(p.tb), Y(p.yS)); });
+      for (var i = band.length-1; i >= 0; i--) g.lineTo(X(band[i].tb), Y(band[i].yT));
+      g.closePath(); g.fillStyle = 'rgba(20,135,104,0.10)'; g.fill();
+    }
+  }
+
+  g.strokeStyle = '#A83636'; g.lineWidth = 2; g.setLineDash([6,4]);
+  g.beginPath();
+  pts.forEach(function(p, i){ i ? g.lineTo(X(p.tb), Y(p.yS)) : g.moveTo(X(p.tb), Y(p.yS)); });
+  g.stroke(); g.setLineDash([]);
+
+  g.strokeStyle = '#148768'; g.lineWidth = 2.25; g.lineJoin = 'round';
+  g.beginPath();
+  pts.forEach(function(p, i){ i ? g.lineTo(X(p.tb), Y(p.yT)) : g.moveTo(X(p.tb), Y(p.yT)); });
+  g.stroke();
+
+  if (m.be && m.be.tb > xmax*0.02){
+    g.strokeStyle = '#868E9E'; g.lineWidth = 1; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(X(m.be.tb), Y(m.be.y)+4); g.lineTo(X(m.be.tb), B); g.stroke(); g.setLineDash([]);
+    g.fillStyle = '#868E9E'; g.beginPath(); g.arc(X(m.be.tb), Y(m.be.y), 3.5, 0, 7); g.fill();
+    g.font = mono; g.textAlign = 'left'; g.textBaseline = 'bottom';
+    g.fillText('break-even ≈ ' + Math.round(m.be.tb).toLocaleString('en-US') + ' TB', X(m.be.tb)+8, Y(m.be.y)-6);
+  }
+
+  function dot(x, y, c){
+    g.beginPath(); g.arc(x, y, 4, 0, 7); g.fillStyle = c; g.fill();
+    g.lineWidth = 1.5; g.strokeStyle = '#FFFFFF'; g.stroke();
+  }
+  var px = X(m.peakTB);
+  dot(px, Y(m.peakS), '#A83636'); dot(px, Y(m.peakT), '#148768');
+  g.font = '500 ' + sans; g.textAlign = 'right';
+  g.fillStyle = '#A83636'; g.textBaseline = 'bottom';
+  g.fillText(kfmt(m.peakS) + ' /mo', px-9, Y(m.peakS)-2);
+  g.fillStyle = '#148768';
+  var below = Y(m.peakT) < B-30;
+  g.textBaseline = below ? 'top' : 'bottom';
+  g.fillText(kfmt(m.peakT) + ' /mo', px-9, Y(m.peakT) + (below ? 8 : -8));
+
+  if (m.be && m.peakS > m.peakT*1.6){
+    var mx = (m.be.tb + m.peakTB)/2;
+    var my = Math.min(Math.max((Y(m.peakS*0.62) + Y(m.peakT*1.1))/2, T+26), B-40);
+    var pctv = Math.round(100*(1 - m.peakT/m.peakS));
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '600 13px -apple-system, "Segoe UI", sans-serif'; g.fillStyle = '#148768';
+    g.fillText(pctv + '% cheaper at peak', X(mx), my);
+    g.font = mono; g.fillStyle = '#868E9E';
+    g.fillText('−' + kfmt(m.peakS - m.peakT) + ' / month', X(mx), my+17);
+  }
+}
+
+['inTotal','inObj'].forEach(function(id){
+  $(id).addEventListener('input', function(){
+    var r = id === 'inTotal' ? $('rTotal') : $('rObj');
+    r.value = $(id).value;
+    recalc();
+  });
+});
+$('rTotal').addEventListener('input', function(){ $('inTotal').value = this.value; recalc(); });
+$('rObj').addEventListener('input', function(){ $('inObj').value = this.value; recalc(); });
+document.querySelectorAll('#tiers input, #tiers select, .pgrid input').forEach(function(n){
+  n.addEventListener('input', recalc);
+});
+var rsz;
+window.addEventListener('resize', function(){ clearTimeout(rsz); rsz = setTimeout(draw, 120); });
+
+setPreset('gov');
+</script>
+
+</body>
+</html>

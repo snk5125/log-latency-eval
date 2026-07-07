@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S3 log tiering strategy</title>
+</head>
+<body>
+<style>
+  :root{
+    --paper:#F5F6F8; --surface:#FFFFFF; --ink:#161A22; --body:#2E3542;
+    --slate:#525A6B; --muted:#868E9E; --line:#E3E6EC; --line-soft:#EDEFF3;
+    --accent:#45508A; --accent-soft:#EEF0F7;
+    --hot:#C07C1E; --cool:#148768; --cold:#1D6DB4; --exp:#A83636;
+    --hot-bg:#FbEED8; --cool-bg:#DCF1E9; --cold-bg:#DCEBFA; --exp-bg:#F6D9D9;
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--paper);color:var(--body);font-family:var(--font-sans);
+    line-height:1.62;-webkit-font-smoothing:antialiased;margin:0;padding:2.4rem 1.25rem 3.5rem}
+  .wrap{max-width:812px;margin:0 auto}
+  .measure{max-width:660px}
+  .eyebrow{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 .55rem}
+  h1{font-size:2.05rem;line-height:1.12;font-weight:600;color:var(--ink);
+    margin:0 0 .7rem;letter-spacing:-.015em;text-wrap:balance}
+  .dek{font-size:1.08rem;color:var(--slate);margin:0;max-width:640px;text-wrap:pretty}
+  h2{font-size:1.28rem;font-weight:600;color:var(--ink);margin:0;letter-spacing:-.01em}
+  h3{font-size:1.03rem;font-weight:600;color:var(--ink);margin:0 0 .32rem}
+  p{margin:0}
+  .rule{height:1px;background:var(--line);border:0;margin:2.4rem 0}
+  code,.mono{font-family:var(--font-mono)}
+
+  figure.fig{margin:2rem 0 0;background:var(--surface);border:1px solid var(--line);
+    border-radius:14px;padding:1.15rem 1.15rem .9rem;overflow-x:auto}
+  figure.fig .inner{min-width:600px}
+  figcaption{font-family:var(--font-mono);font-size:.75rem;color:var(--muted);
+    margin-top:.35rem;letter-spacing:.01em}
+  .fig svg{display:block;width:100%;height:auto}
+  .svg-hd{font-family:var(--font-mono);font-size:13px;fill:var(--ink)}
+  .svg-lab{font-size:13px;fill:var(--ink)}
+  .svg-sub{font-size:12px;fill:var(--slate)}
+  .svg-ax{font-size:12px;fill:var(--muted)}
+  .seg-hot{fill:var(--hot-bg);stroke:var(--hot);stroke-width:1}
+  .seg-cool{fill:var(--cool-bg);stroke:var(--cool);stroke-width:1}
+  .seg-cold{fill:var(--cold-bg);stroke:var(--cold);stroke-width:1}
+  .seg-exp{fill:var(--exp)}
+
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1.6rem}
+  .card{border:1px solid var(--line);border-radius:13px;padding:1.05rem 1.15rem;background:var(--surface)}
+  .card .cname{font-family:var(--font-mono);font-size:.98rem;color:var(--ink)}
+  .card .cgov{font-size:.84rem;color:var(--slate);margin:.2rem 0 .8rem}
+  .card .lbl{font-family:var(--font-mono);font-size:.68rem;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted);display:block;margin:.6rem 0 .2rem}
+  .card p{font-size:.92rem;color:var(--body)}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:.3rem;margin-top:.15rem}
+  .chip{font-family:var(--font-mono);font-size:.72rem;padding:.09rem .42rem;border-radius:5px;white-space:nowrap}
+  .chip.hot{background:var(--hot-bg);color:#7a4e0e}
+  .chip.cool{background:var(--cool-bg);color:#0c5a45}
+  .chip.cold{background:var(--cold-bg);color:#154e83}
+  .chip.exp{background:var(--exp-bg);color:#8a2a2a}
+  .arw{color:var(--muted);font-size:.8rem}
+
+  section.sec{margin-top:2.6rem}
+  .sec-head{display:flex;align-items:baseline;gap:.7rem;margin-bottom:.4rem}
+  .sec-head .ix{font-family:var(--font-mono);font-size:.85rem;color:var(--accent)}
+  .sec-sub{font-size:.9rem;color:var(--muted);margin:.1rem 0 1.1rem;max-width:600px}
+
+  .dec{padding:1.15rem 0;border-top:1px solid var(--line-soft)}
+  .dec p.why{color:var(--body);max-width:640px;font-size:.97rem}
+  .tradeoff{margin-top:.65rem;padding:.55rem .85rem;background:#FbF4E7;
+    border-left:3px solid var(--hot);border-radius:0;max-width:648px}
+  .tradeoff .tlab{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.11em;
+    text-transform:uppercase;color:#8a5a12;display:block;margin-bottom:.12rem}
+  .tradeoff p{color:var(--slate);font-size:.9rem}
+
+  .meta{margin-top:2.6rem;background:var(--accent-soft);border:1px solid #DBE0EF;
+    border-radius:13px;padding:1.2rem 1.3rem}
+  .meta .eyebrow{color:var(--accent)}
+  .meta p{color:var(--ink);max-width:660px;margin-top:.3rem;font-size:1rem}
+  footer{margin-top:2.4rem;padding-top:1.1rem;border-top:1px solid var(--line);
+    font-size:.82rem;color:var(--muted);max-width:660px}
+
+  .bills{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1.5rem}
+  .bcard{border:1px solid var(--line);border-radius:13px;padding:1.05rem 1.15rem;background:var(--surface)}
+  .bhead{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;flex-wrap:wrap}
+  .bhead .cname{font-family:var(--font-mono);font-size:.95rem;color:var(--ink)}
+  .bhead .bsub{font-size:.76rem;color:var(--muted)}
+  .track{height:16px;border-radius:8px;background:var(--line-soft);overflow:hidden;margin:.75rem 0 .85rem}
+  .fill{display:flex;height:100%}
+  .seg{height:100%}
+  .s-hot{background:#E6B968}.s-cool{background:#5FB89B}.s-cold{background:#6FA6DA}.s-req{background:#C8CDD7}
+  .bt{width:100%;border-collapse:collapse;font-size:.86rem}
+  .bt td{padding:.28rem 0;color:var(--slate);border-top:1px solid var(--line-soft)}
+  .bt tr:first-child td{border-top:none}
+  .bt td:last-child{text-align:right;font-family:var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums}
+  .bt tr.ttl td{border-top:1px solid var(--line);padding-top:.42rem;color:var(--ink);font-weight:500}
+  .bt tr.ttl td:last-child{font-size:1.02rem}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:.5rem}
+  .d-hot{background:#E6B968}.d-cool{background:#5FB89B}.d-cold{background:#6FA6DA}.d-req{background:#C8CDD7}
+  .bnote{margin-top:.7rem;font-size:.82rem;color:var(--slate)}
+  .bnote b{color:var(--ink);font-weight:500}
+  .assump{margin-top:.95rem;font-size:.78rem;color:var(--muted);max-width:668px;line-height:1.55}
+  .pt{width:100%;border-collapse:collapse;font-size:.85rem}
+  .pt th{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;text-align:right;padding:.1rem 0 .35rem}
+  .pt th:first-child{text-align:left}
+  .pt td{padding:.32rem 0 .32rem .8rem;border-top:1px solid var(--line-soft);text-align:right;
+    font-family:var(--font-mono);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pt td:first-child{text-align:left;padding-left:0}
+  .pt tr.ttl td{border-top:1px solid var(--line);font-weight:600;padding-top:.45rem}
+  @media(max-width:640px){
+    .bills{grid-template-columns:1fr}
+    body{padding:1.8rem 1rem 3rem}
+    h1{font-size:1.7rem}
+    .cards{grid-template-columns:1fr}
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Reference &middot; cloud data architecture</p>
+  <h1>S3 log tiering strategy</h1>
+  <p class="dek">Two buckets, split by how the data must be <em>governed</em> &mdash; with delivery path, retention, and storage-class lifecycle chosen per class of data rather than globally. The layout first, then why each choice was made and what it trades.</p>
+
+  <figure class="fig">
+    <div class="inner">
+      <svg viewBox="0 0 680 400" role="img" aria-labelledby="figTitle figDesc">
+        <title id="figTitle">S3 log tiering and lifecycle across two buckets</title>
+        <desc id="figDesc">An immutable tier0-compliance bucket (indigo outline, Object Lock, 30-month retention) holds agent tier-0 critical logs plus CloudTrail and Config, aging through S3 Standard from 0 to 90 days, Glacier Instant from 90 days to 12 months, then Deep Archive from 12 to 30 months. A separate mutable ops-bronze bucket (grey outline) holds agent tier-1, tier-2 and tier-3 logs expiring at 12 months, 90 days and 14 days. Colour encodes storage temperature: amber Standard, teal infrequent access, blue archive, red expire.</desc>
+
+        <rect x="40" y="52" width="600" height="152" rx="12" fill="none" stroke="#6E63C4" stroke-width="1.5"/>
+        <rect x="40" y="216" width="600" height="146" rx="12" fill="none" stroke="#BEC3CE" stroke-width="1.5"/>
+
+        <line x1="421" y1="110" x2="421" y2="200" stroke="#E3E6EC"/>
+        <line x1="472" y1="110" x2="472" y2="200" stroke="#E3E6EC"/>
+        <line x1="537" y1="110" x2="537" y2="200" stroke="#E3E6EC"/>
+        <line x1="580" y1="110" x2="580" y2="200" stroke="#E3E6EC"/>
+        <line x1="421" y1="272" x2="421" y2="356" stroke="#E3E6EC"/>
+        <line x1="472" y1="272" x2="472" y2="356" stroke="#E3E6EC"/>
+        <line x1="537" y1="272" x2="537" y2="356" stroke="#E3E6EC"/>
+        <line x1="580" y1="272" x2="580" y2="356" stroke="#E3E6EC"/>
+
+        <text class="svg-ax" x="260" y="40" text-anchor="middle">0</text>
+        <text class="svg-ax" x="421" y="40" text-anchor="middle">30d</text>
+        <text class="svg-ax" x="472" y="40" text-anchor="middle">90d</text>
+        <text class="svg-ax" x="537" y="40" text-anchor="middle">12mo</text>
+        <text class="svg-ax" x="580" y="40" text-anchor="middle">30mo</text>
+
+        <text class="svg-hd" x="52" y="78">tier0-compliance bucket</text>
+        <text class="svg-sub" x="52" y="96">immutable (Object Lock) &middot; retain 30 months</text>
+
+        <text class="svg-lab" x="52" y="128">Agent tier-0</text>
+        <rect class="seg-hot" x="260" y="116" width="212" height="16" rx="3"/>
+        <rect class="seg-cool" x="472" y="116" width="65" height="16" rx="3"/>
+        <rect class="seg-cold" x="537" y="116" width="43" height="16" rx="3"/>
+        <rect class="seg-exp" x="578" y="114" width="4" height="20" rx="1"/>
+        <text class="svg-ax" x="586" y="128">30 mo</text>
+
+        <text class="svg-lab" x="52" y="160">CloudTrail</text>
+        <rect class="seg-hot" x="260" y="148" width="212" height="16" rx="3"/>
+        <rect class="seg-cool" x="472" y="148" width="65" height="16" rx="3"/>
+        <rect class="seg-cold" x="537" y="148" width="43" height="16" rx="3"/>
+        <rect class="seg-exp" x="578" y="146" width="4" height="20" rx="1"/>
+        <text class="svg-ax" x="586" y="160">30 mo</text>
+
+        <text class="svg-lab" x="52" y="192">AWS Config</text>
+        <rect class="seg-hot" x="260" y="180" width="212" height="16" rx="3"/>
+        <rect class="seg-cool" x="472" y="180" width="65" height="16" rx="3"/>
+        <rect class="seg-cold" x="537" y="180" width="43" height="16" rx="3"/>
+        <rect class="seg-exp" x="578" y="178" width="4" height="20" rx="1"/>
+        <text class="svg-ax" x="586" y="192">30 mo</text>
+
+        <text class="svg-hd" x="52" y="242">ops-bronze bucket</text>
+        <text class="svg-sub" x="52" y="260">mutable &middot; operational tiers, prefix-scoped</text>
+
+        <text class="svg-lab" x="52" y="290">Agent tier-1</text>
+        <rect class="seg-hot" x="260" y="278" width="161" height="16" rx="3"/>
+        <rect class="seg-cool" x="421" y="278" width="51" height="16" rx="3"/>
+        <rect class="seg-cold" x="472" y="278" width="65" height="16" rx="3"/>
+        <rect class="seg-exp" x="535" y="276" width="4" height="20" rx="1"/>
+        <text class="svg-ax" x="543" y="290">12 mo</text>
+
+        <text class="svg-lab" x="52" y="322">Agent tier-2</text>
+        <rect class="seg-hot" x="260" y="310" width="98" height="16" rx="3"/>
+        <rect class="seg-cool" x="358" y="310" width="114" height="16" rx="3"/>
+        <rect class="seg-exp" x="470" y="308" width="4" height="20" rx="1"/>
+        <text class="svg-ax" x="478" y="322">90 d</text>
+
+        <text class="svg-lab" x="52" y="354">Agent tier-3</text>
+        <rect class="seg-hot" x="260" y="342" width="127" height="16" rx="3"/>
+        <rect class="seg-exp" x="385" y="340" width="4" height="20" rx="1"/>
+        <text class="svg-ax" x="393" y="354">14 d</text>
+
+        <rect class="seg-hot" x="40" y="370" width="12" height="12" rx="2"/>
+        <text class="svg-ax" x="57" y="380">Standard (hot)</text>
+        <rect class="seg-cool" x="150" y="370" width="12" height="12" rx="2"/>
+        <text class="svg-ax" x="167" y="380">IA / Glacier Instant</text>
+        <rect class="seg-cold" x="305" y="370" width="12" height="12" rx="2"/>
+        <text class="svg-ax" x="322" y="380">Glacier / Deep (cold)</text>
+        <rect class="seg-exp" x="465" y="370" width="12" height="12" rx="2"/>
+        <text class="svg-ax" x="482" y="380">expire</text>
+      </svg>
+    </div>
+    <figcaption>Left&ndash;right is data age &middot; colour is storage temperature &middot; the red cap is expiry.</figcaption>
+  </figure>
+
+  <div class="cards">
+    <div class="card">
+      <div class="cname">tier0-compliance</div>
+      <div class="cgov">Immutable (Object Lock) &middot; 30-month retention &middot; log-archive account.</div>
+      <span class="lbl">Holds</span>
+      <p>Agent tier-0 (critical) &middot; CloudTrail &middot; Config.</p>
+      <span class="lbl">Delivery</span>
+      <p>Tier-0 streams + durable tee; CloudTrail / Config write natively.</p>
+      <span class="lbl">Lifecycle</span>
+      <div class="flow"><span class="chip hot">Standard</span><span class="arw">&rarr;</span><span class="chip cool">Glacier Instant 90d</span><span class="arw">&rarr;</span><span class="chip cold">Deep Archive 12mo</span><span class="arw">&rarr;</span><span class="chip exp">expire 30mo</span></div>
+    </div>
+    <div class="card">
+      <div class="cname">ops-bronze</div>
+      <div class="cgov">Mutable &middot; tier-scoped expiry &middot; fed by S3 landing (non-HA ingest).</div>
+      <span class="lbl">Holds</span>
+      <p>Agent tier-1 / tier-2 / tier-3, segmented by prefix.</p>
+      <span class="lbl">Delivery</span>
+      <p>S3 landing &mdash; S3 absorbs durability and buffering.</p>
+      <span class="lbl">Lifecycle</span>
+      <div class="flow"><span class="chip exp">tier-1 &middot; 12mo</span><span class="chip exp">tier-2 &middot; 90d</span><span class="chip exp">tier-3 &middot; 14d</span></div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <p class="eyebrow">Example &middot; lifetime cost of 1 TB</p>
+  <p class="dek measure">One terabyte written in, then aged through each bucket's lifecycle &mdash; storage integrated over the full retention, plus writes and transitions. Bar length is the total cost; colour is the storage class it accrued in.</p>
+
+  <div class="bills">
+    <div class="bcard">
+      <div class="bhead"><span class="cname">tier0-compliance</span><span class="bsub">immutable &middot; 30-month retention</span></div>
+      <div class="track"><div class="fill" style="width:100%">
+        <span class="seg s-hot" style="width:53%"></span>
+        <span class="seg s-cool" style="width:28%"></span>
+        <span class="seg s-cold" style="width:13%"></span>
+        <span class="seg s-req" style="width:6%"></span>
+      </div></div>
+      <table class="bt">
+        <tbody>
+          <tr><td><i class="dot d-hot"></i>Standard &middot; 0&ndash;90d</td><td>$71</td></tr>
+          <tr><td><i class="dot d-cool"></i>Glacier Instant &middot; 90d&ndash;12mo</td><td>$37</td></tr>
+          <tr><td><i class="dot d-cold"></i>Deep Archive &middot; 12&ndash;30mo</td><td>$18</td></tr>
+          <tr><td><i class="dot d-req"></i>Writes + transitions</td><td>$8</td></tr>
+          <tr class="ttl"><td>Total per TB</td><td>&asymp; $133</td></tr>
+        </tbody>
+      </table>
+      <div class="bnote">Without lifecycle (Standard-only, 30&nbsp;mo): <b>&asymp; $707</b> &mdash; 5.3&times; more.</div>
+    </div>
+
+    <div class="bcard">
+      <div class="bhead"><span class="cname">ops-bronze</span><span class="bsub">mutable &middot; 12-month (tier-1)</span></div>
+      <div class="track"><div class="fill" style="width:67%">
+        <span class="seg s-hot" style="width:27%"></span>
+        <span class="seg s-cool" style="width:29%"></span>
+        <span class="seg s-cold" style="width:37%"></span>
+        <span class="seg s-req" style="width:7%"></span>
+      </div></div>
+      <table class="bt">
+        <tbody>
+          <tr><td><i class="dot d-hot"></i>Standard &middot; 0&ndash;30d</td><td>$24</td></tr>
+          <tr><td><i class="dot d-cool"></i>Standard-IA &middot; 30&ndash;90d</td><td>$26</td></tr>
+          <tr><td><i class="dot d-cold"></i>Glacier Flexible &middot; 90d&ndash;12mo</td><td>$33</td></tr>
+          <tr><td><i class="dot d-req"></i>Writes + transitions + reads</td><td>$6</td></tr>
+          <tr class="ttl"><td>Total per TB</td><td>&asymp; $89</td></tr>
+        </tbody>
+      </table>
+      <div class="bnote">Standard-only, 12&nbsp;mo: <b>&asymp; $283</b> (3.2&times;). Cheaper tiers: tier-2 (90d) &asymp; $46 &middot; tier-3 (14d) &asymp; $12.</div>
+    </div>
+  </div>
+  <p class="assump">Lifetime cost per 1&nbsp;TB ingested (1&nbsp;TB = 1,024&nbsp;GB, ~102k objects at ~10&nbsp;MB), storage integrated over the retention, us-east-2 list prices. Tier-0 on-demand audit reads and Deep-Archive restores are not included; ops pipeline reads (landing &rarr; silver) are. KMS and cross-region replication not priced. The headline: lifecycle transitions make 30-month immutable retention cost only <b>~5&times; less</b> than leaving it in Standard &mdash; the reason long compliance retention stays affordable.</p>
+
+  <hr class="rule">
+
+  <p class="eyebrow">Example &middot; cost at peak &mdash; a 7 TB/day fleet</p>
+  <p class="dek measure">The same lifecycles at fleet scale: 7&nbsp;TB/day of ingest, split 1&nbsp;TB/day to tier-0 and 2&nbsp;TB/day each to tiers 1&ndash;3. Standing data grows until daily expiry equals daily ingest &mdash; the <em>peak</em>, &asymp;1,851&nbsp;TB &mdash; where the bill settles near <b>$12.7k/month</b>, against $42.6k for the same bytes left in Standard.</p>
+
+  <figure class="fig">
+    <div class="inner">
+      <svg viewBox="0 0 680 322" role="img" aria-labelledby="pkTitle pkDesc">
+        <title id="pkTitle">Monthly cost versus total data stored, at 7 TB per day of ingest</title>
+        <desc id="pkDesc">As standing data grows to its steady-state peak of 1,851 terabytes, the tiered-lifecycle curve flattens to about 12,700 dollars per month while the Standard-only line climbs straight to about 42,600. The curves cross near 250 terabytes; beyond that the gap widens to a 70 percent saving.</desc>
+
+        <g stroke="#EDEFF3">
+          <line x1="64" y1="215" x2="642" y2="215"/>
+          <line x1="64" y1="161.9" x2="642" y2="161.9"/>
+          <line x1="64" y1="108.9" x2="642" y2="108.9"/>
+          <line x1="64" y1="55.8" x2="642" y2="55.8"/>
+        </g>
+        <line x1="64" y1="268" x2="642" y2="268" stroke="#E3E6EC"/>
+        <text class="svg-ax" x="56" y="219" text-anchor="end">$10k</text>
+        <text class="svg-ax" x="56" y="165.9" text-anchor="end">$20k</text>
+        <text class="svg-ax" x="56" y="112.9" text-anchor="end">$30k</text>
+        <text class="svg-ax" x="56" y="59.8" text-anchor="end">$40k</text>
+        <text class="svg-ax" x="64" y="16">$ / month</text>
+
+        <g stroke="#E3E6EC">
+          <line x1="216.1" y1="268" x2="216.1" y2="273"/>
+          <line x1="368.2" y1="268" x2="368.2" y2="273"/>
+          <line x1="520.3" y1="268" x2="520.3" y2="273"/>
+          <line x1="627.1" y1="268" x2="627.1" y2="273"/>
+        </g>
+        <text class="svg-ax" x="64" y="287" text-anchor="middle">0</text>
+        <text class="svg-ax" x="216.1" y="287" text-anchor="middle">500</text>
+        <text class="svg-ax" x="368.2" y="287" text-anchor="middle">1,000</text>
+        <text class="svg-ax" x="520.3" y="287" text-anchor="middle">1,500</text>
+        <text class="svg-ax" x="627.1" y="287" text-anchor="middle">1,851</text>
+        <text class="svg-ax" x="353" y="308" text-anchor="middle">total data stored (TB) &mdash; filling toward steady state</text>
+
+        <path d="M 141.0 237.1 L 209.4 209.7 L 460.4 109.0 L 627.1 42.2 L 627.1 200.5 L 460.4 203.4 L 209.4 219.7 L 141.0 237.2 Z" fill="#148768" opacity="0.09"/>
+
+        <line x1="64" y1="268" x2="627.1" y2="42.2" stroke="#A83636" stroke-width="2" stroke-dasharray="6 4"/>
+        <polyline points="64.0,264.7 93.8,252.7 118.1,243.0 141.0,237.2 209.4,219.7 460.4,203.4 627.1,200.5" fill="none" stroke="#148768" stroke-width="2.25" stroke-linejoin="round"/>
+
+        <line x1="64" y1="34" x2="90" y2="34" stroke="#148768" stroke-width="2.25"/>
+        <text class="svg-sub" x="97" y="38">tiered lifecycle</text>
+        <line x1="207" y1="34" x2="233" y2="34" stroke="#A83636" stroke-width="2" stroke-dasharray="6 4"/>
+        <text class="svg-sub" x="240" y="38">no lifecycle (all Standard)</text>
+
+        <line x1="141" y1="241" x2="141" y2="268" stroke="#868E9E" stroke-dasharray="3 3"/>
+        <circle cx="141" cy="237.2" r="3.5" fill="#868E9E"/>
+        <text class="svg-ax" x="150" y="226">break-even &asymp; 250 TB</text>
+
+        <text x="450" y="140" text-anchor="middle" font-size="13" font-weight="600" fill="#148768">70% cheaper at peak</text>
+        <text class="svg-ax" x="450" y="158" text-anchor="middle">&minus;$29.9k / month &middot; &minus;$358k / year</text>
+
+        <circle cx="627.1" cy="42.2" r="4" fill="#A83636" stroke="#FFFFFF" stroke-width="1.5"/>
+        <circle cx="627.1" cy="200.5" r="4" fill="#148768" stroke="#FFFFFF" stroke-width="1.5"/>
+        <text x="617" y="38" text-anchor="end" font-size="12" fill="#A83636">$42.6k /mo</text>
+        <text x="617" y="193" text-anchor="end" font-size="12" fill="#148768">$12.7k /mo</text>
+      </svg>
+    </div>
+    <figcaption>Cost vs standing volume as the buckets fill &middot; kinks are lifecycle boundaries &middot; the shaded gap is the lifecycle saving.</figcaption>
+  </figure>
+
+  <div class="bcard" style="margin-top:1.1rem">
+    <div class="bhead"><span class="cname">where the peak lives</span><span class="bsub">per tier &middot; at steady state</span></div>
+    <table class="pt" style="margin-top:.5rem">
+      <thead>
+        <tr><th>tier</th><th>ingest</th><th>retention</th><th>stored at peak</th><th>cost / mo</th><th>$ / TB-mo</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>tier-0 &middot; critical</td><td>1 TB/d</td><td>30 mo</td><td>913 TB</td><td>$3,941</td><td>$4.3</td></tr>
+        <tr><td>tier-1</td><td>2 TB/d</td><td>12 mo</td><td>730 TB</td><td>$5,134</td><td>$7.0</td></tr>
+        <tr><td>tier-2</td><td>2 TB/d</td><td>90 d</td><td>180 TB</td><td>$2,971</td><td>$16.5</td></tr>
+        <tr><td>tier-3</td><td>2 TB/d</td><td>14 d</td><td>28 TB</td><td>$674</td><td>$24.1</td></tr>
+        <tr class="ttl"><td>total</td><td>7 TB/d</td><td>&mdash;</td><td>1,851 TB</td><td>$12,720</td><td>$6.9</td></tr>
+      </tbody>
+    </table>
+    <div class="bnote">The counterintuitive row: tier-0 is the <b>smallest stream but the largest standing footprint</b> &mdash; 913&nbsp;TB, half the total, because it is held 30 months &mdash; yet the <b>cheapest per stored TB</b>, because lifecycle freezes most of it into Deep Archive. Meanwhile short-lived tier-3 never leaves Standard, so its few TB are the dearest per TB in the fleet.</div>
+  </div>
+  <p class="assump">Peak = steady state, reached once the longest retention (30&nbsp;months) has elapsed and expiry balances ingest. Same lifecycles and us-east-2 list prices as above; ~10&nbsp;MB objects; storage + PUT + transition fees, excluding retrievals, KMS, and replication. Below the &asymp;250&nbsp;TB break-even, tiering costs slightly <em>more</em> than plain Standard &mdash; young data is still hot and transition fees are front-loaded &mdash; so the scheme pays off only past fleet scale, which is exactly where it matters.</p>
+
+  <hr class="rule">
+
+  <p class="eyebrow">Why these choices &mdash; and what they cost</p>
+  <p class="dek measure">The through-line is one principle: spend each scarce resource &mdash; latency, durability, storage cost, or operational burden &mdash; only where it's justified. That is what tiering is for.</p>
+
+  <section class="sec">
+    <div class="sec-head"><span class="ix">A</span><h2>Bucket topology</h2></div>
+    <p class="sec-sub">What defines a bucket boundary, and what stays a prefix.</p>
+
+    <div class="dec">
+      <h3>Split buckets by governance posture, not by source</h3>
+      <p class="why">The things that actually differ between these data sets &mdash; Object Lock, replication, KMS key, default retention, access boundary &mdash; are all bucket-level features, and source drives none of them. Partition by how the data must be treated, not by what it is.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Sources co-mingle inside a bucket (cross-source queries; one KMS key and access boundary per bucket), and the policy grows when multiple writers share it. Finer distinctions fall to prefixes.</p></div>
+    </div>
+
+    <div class="dec">
+      <h3>Tier is a prefix in the ops bucket, not a bucket per tier</h3>
+      <p class="why">Tiers 1/2/3 differ only in lifecycle, storage class, and retention &mdash; all prefix-scopable. That avoids bucket sprawl while keeping the differentiated treatment.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>All operational tiers inherit the same bucket-level settings; promoting a tier later (its own KMS key, say) means a migration. Cross-tier queries fragment across prefixes.</p></div>
+    </div>
+
+    <div class="dec">
+      <h3>CloudTrail / Config write natively, bypassing the pipeline</h3>
+      <p class="why">Native delivery is more reliable (compliance delivery doesn't hinge on your pipeline being up), preserves the pristine raw record, and auto-partitions by service.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Heterogeneous writers mean a bigger bucket policy (AWS service principals plus your role) and AWS-imposed key layouts that won't match your agent partitioning. If you want them in silver, the pipeline must read the bucket &mdash; an added input.</p></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="ix">B</span><h2>Delivery &amp; resiliency</h2></div>
+    <p class="sec-sub">How data gets in, and where the HA burden lands.</p>
+
+    <div class="dec">
+      <h3>Bulk tiers via S3 landing</h3>
+      <p class="why">The core goal: offload durability and buffering to S3 so the ingest / aggregation tier can be non-HA &mdash; no SLA, no on-call. S3 absorbs producer bursts and consumer downtime, and the aggregator drains when it's up.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Roughly seconds of added latency (flush-dominated), plus more object and request management. Fine wherever seconds don't matter.</p></div>
+    </div>
+
+    <div class="dec">
+      <h3>Tier-0 via direct stream + durable tee</h3>
+      <p class="why">Resolves the latency-vs-durability tension for the critical slice: streaming delivers sub-second for alerting and detection, while the tee drops a durable, immutable copy for compliance and replay &mdash; so the record is safe even if the fast path isn't.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Data is written twice (cheap, because tier-0 is low-volume) and a fan-out to configure. The streaming path still has to exist, though it's no longer the system-of-record so it needn't be fully HA.</p></div>
+    </div>
+
+    <div class="dec">
+      <h3>Tier assigned at the host for agent logs</h3>
+      <p class="why">Lets you route both the delivery path and the destination at emit time &mdash; critical to the stream, bulk to the landing bucket.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Only works when tier is knowable from source or path. Content-derived tiering can't happen at the host &mdash; it moves to the silver layer &mdash; and classification policy now lives in host config to maintain and deploy.</p></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="ix">C</span><h2>Governance &amp; immutability</h2></div>
+    <p class="sec-sub">The one bucket-level lever that forces the split.</p>
+
+    <div class="dec">
+      <h3>Object Lock (WORM) on the compliance bucket only</h3>
+      <p class="why">Tamper-proof audit and critical evidence, often regulatory. It's a bucket-level feature &mdash; which is precisely why the immutable data gets its own bucket.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>It's bucket-wide (no per-prefix locking); default retention is bucket-level, so mixed retentions need per-object overrides; you can't delete early even when you'd want to; and you can't compact or rewrite objects after write, so right-sizing has to happen upstream.</p></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="ix">D</span><h2>Lifecycle &amp; cost</h2></div>
+    <p class="sec-sub">How data cools, how long it lives, and what actually drives the bill.</p>
+
+    <div class="dec">
+      <h3>Standard &rarr; Glacier Instant &rarr; Deep Archive; skip IA</h3>
+      <p class="why">Recent data stays hot for investigations, then cools cheaply for the long compliance tail. Glacier Instant keeps millisecond retrieval for the mid window; Deep Archive is cheapest for the cold tail. Standard-IA rarely earns its place for write-once, rarely-read data.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Deep-Archive reads need a restore (hours), so deep audits aren't instant; you pay per-object transition fees and minimum-duration charges; and small objects archive poorly (128 KB / ~40 KB minimums) &mdash; which the low-volume tier-0 partly fights.</p></div>
+    </div>
+
+    <div class="dec">
+      <h3>Retention differentiated by tier (30mo / 12mo / 90d / 14d)</h3>
+      <p class="why">Storage &times; retention is the dominant cost, so short retention on high-volume, noisy tiers is the single biggest lever &mdash; keep only the valuable data long.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Aggressive expiry means no replay past the window and demands confident classification: a mis-tiered critical log could expire in 14 days. The numbers are policy calls, not derived.</p></div>
+    </div>
+
+    <div class="dec">
+      <h3>Request-rate via object size and key design, not more buckets</h3>
+      <p class="why">A single bucket auto-partitions to very high rates, per-account bucketing already shards, and bigger objects cut request rate for the same bytes. Buckets are for isolation, not throughput.</p>
+      <div class="tradeoff"><span class="tlab">Trade-off</span><p>Bigger objects raise latency (bigger flush) &mdash; the latency&ndash;rate&ndash;cost knob &mdash; and analytics-friendly date prefixes can hotspot under bursts, so you may need a shard element early in the key that fights clean date partitioning.</p></div>
+    </div>
+  </section>
+
+  <div class="meta">
+    <p class="eyebrow">The meta-trade-off</p>
+    <p>Nearly every choice above spends one of four things &mdash; latency, durability, cost, or operational burden &mdash; to buy another. Tiering exists so you make that trade <em>per class of data</em>: streaming, immutability, and long retention on the small critical slice; cheap, non-HA, short-lived handling on the bulk. The risk that ties it together is classification confidence &mdash; the whole scheme only holds if data lands in the right tier, since that one decision sets its latency, durability, retention, and cost all at once.</p>
+  </div>
+
+  <footer>
+    Retention windows and storage-class thresholds are illustrative &mdash; set them to your compliance mandate and latency SLAs. Storage-class prices and minimums referenced are AWS list-price approximations; verify against current pricing for your region.
+  </footer>
+</div>
+
+</body>
+</html>
